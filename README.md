@@ -1,805 +1,553 @@
-# Study Management System
+# StudyFlow — Study Management System
 
-A study topic management application written in C, built around a doubly linked list with priority-based sorted insertion, search, filtering, topic updates, progress tracking, a separate study-session queue, and file persistence.
+A C-based study manager with a browser frontend powered by WebAssembly.
 
-The project started as a console-based C application and has been extended with a WebAssembly (WASM) browser interface while keeping the existing C data structures and core logic.
+The project keeps the real data structures and application rules in C:
 
-This project is mainly designed as a learning project to practice:
-- Data structures
-- Pointers
-- Dynamic memory allocation
-- Linked lists
-- Queues
-- Searching
-- Filtering
-- File handling
-- Modular C programming
-- C and JavaScript integration through WebAssembly
-
-FEATURES
---------
-
-MASTER TOPIC LIST
------------------
-The main topic collection uses a doubly linked list.
-
-Features:
-- Add topics
-- Insert topics according to priority
-- Priority-based sorted insertion
-- Search topics by subject and chapter
-- Multi-word subject and chapter support
-- Update topic details
-- Update priority with automatic re-sorting
-- Update completion status
-- Delete topics
-- Display all topics
-- Filter topics by status
-- Filter topics by priority
+- Doubly linked list for the master topic list
+- Priority-sorted insertion
+- Search and case-insensitive matching
+- Filters
+- Topic update and deletion
+- Singly linked study queue
+- Queue persistence
 - Progress statistics
+- File handling
 
-Priority values:
-    1  = High
-    0  = Medium
-   -1  = Low
+The browser UI is a JavaScript/HTML/CSS layer over the C core.
 
-Status values:
-    0  = Pending
-    1  = Completed
+---
 
+## Project structure
 
-TODAY'S STUDY QUEUE
--------------------
-The study queue is maintained separately from the master topic list.
+```text
+StudyManagementSystem-WASM/
+│
+├── include/
+│   ├── topic.h
+│   └── wasm_bridge.h
+│
+├── src/
+│   ├── globals.c
+│   ├── input.c
+│   ├── insert.c
+│   ├── delete.c
+│   ├── display.c
+│   ├── filters.c
+│   ├── file_handling.c
+│   ├── progress_stat.c
+│   ├── search.c
+│   ├── temp_session.c
+│   ├── update.c
+│   └── wasm_bridge.c
+│
+├── data/
+│   ├── data.txt
+│   └── queue_data.txt
+│
+├── web/
+│   ├── index.html
+│   ├── style.css
+│   ├── app.js
+│   ├── wasm.js
+│   └── wasm.wasm
+│
+├── main.c
+├── build_native.bat
+├── build_wasm.bat
+└── README.md
+```
 
-Features:
-- Select topics using status + priority
-- Add a chosen number of matching topics
-- Display today's queue
-- Show the number of remaining tasks
-- Study the next topic
-- Dequeue the next task
-- Clear the current queue
+`main.c` is only for the native console build. It is not included in the browser/WASM build.
 
-The queue stores a pointer to the original Topic node instead of copying the complete topic data.
+---
 
-This keeps the queue lightweight and prevents unnecessary duplication.
+## Core data structures
 
-The queue is intentionally session-only and is not persisted.
+### Topic
 
+```c
+typedef struct Topic{
+    char subject[50];
+    char chapter[50];
+    int priority;
+    int is_done;
+    struct Topic* next;
+    struct Topic* prev;
+} Topic;
+```
 
-PERSISTENCE
------------
+Priority:
 
-The project has two persistence mechanisms depending on which version is being used.
+```text
+ 1  = High
+ 0  = Medium
+-1  = Low
+```
 
-NATIVE C CONSOLE VERSION
-------------------------
-The master topic list is saved to:
+Status:
 
-    data/data.txt
+```text
+0 = Pending
+1 = Completed
+```
 
-The program saves the master list after operations such as:
-- Insert
-- Update
-- Delete
+### QueueNode
 
-When the program starts again, the saved data is loaded from data/data.txt.
+```c
+typedef struct QueueNode{
+    Topic* topic;
+    struct QueueNode* next;
+} QueueNode;
+```
 
-The study queue is intentionally not saved because it represents the current study session.
+The queue stores `Topic*` references instead of copying the full topic.
 
+---
 
-BROWSER / WEBASSEMBLY VERSION
------------------------------
-The browser version uses the Emscripten persistent filesystem through IDBFS, which stores the application data in the browser's persistent storage.
+# New persistence design
 
-Conceptually:
+The project now has two save modes.
 
-    Browser UI
+```c
+enum SaveMode {save_master, save_queue};
+extern enum SaveMode currMode;
+```
+
+`currMode` tells `save_data()` WHAT to save:
+
+```text
+save_master -> data.txt
+save_queue  -> queue_data.txt
+```
+
+There is a separate enum for WHETHER an operation should save:
+
+```c
+enum when2save {saveY, saveN};
+extern enum when2save askYN;
+```
+
+```text
+saveY -> save normally
+saveN -> temporarily disable saving while loading data
+```
+
+This keeps the two responsibilities separate.
+
+---
+
+# File format
+
+### Master list
+
+`data.txt`
+
+```text
+subject,chapter,priority,status
+Maths,Fourier series,1,0
+Network analysis,graphs,0,0
+English,grammar,-1,0
+```
+
+### Queue
+
+`queue_data.txt`
+
+The queue file stores:
+
+```text
+subject,chapter,priority,status
+```
+
+When the queue is loaded, the current `Topic*` is recovered from the master list using:
+
+```text
+subject + chapter
+```
+
+This means the queue uses the latest priority/status from the master topic after restart.
+
+---
+
+# Browser persistence
+
+The browser mounts:
+
+```text
+/data
+```
+
+using Emscripten IDBFS.
+
+Both files live in that directory:
+
+```text
+/data/data.txt
+/data/queue_data.txt
+```
+
+The browser therefore persists:
+
+```text
+Master topics  -> data.txt
+Study queue    -> queue_data.txt
+```
+
+The JavaScript layer calls `FS.syncfs()` so the Emscripten filesystem is synchronized with IndexedDB.
+
+Refreshing the page does not remove stored data.
+
+Clearing browser site data / IndexedDB removes it.
+
+---
+
+# Important C flow
+
+## Insert
+
+```text
+insert_prior()
+      |
+      v
+insert_node_by_priority()
+      |
+      +--> insertfront()
+      +--> insertback()
+      +--> insert_any()
+      |
+      v
+save master
+```
+
+The save is intentionally centralized in `insert_prior()` instead of repeating the same save block in three insert functions.
+
+While loading:
+
+```c
+askYN = saveN;
+```
+
+so `insert_prior()` does not overwrite the file that is currently being read.
+
+---
+
+## Update
+
+Changing priority:
+
+```text
+remove_node()
+      |
+      v
+change priority
+      |
+      v
+insert_node_by_priority()
+      |
+      v
+save master + queue
+```
+
+Updating subject/chapter/status also saves both files.
+
+The queue file is rewritten after an update so a queued topic remains loadable even when its subject/chapter changes.
+
+---
+
+## Delete
+
+Deleting a topic first removes any queue node that points to it.
+
+```text
+queue_remove_topic()
         |
         v
-    JavaScript
+remove_node()
         |
         v
-    WebAssembly
+free(topic)
         |
         v
-    C application
-        |
-        v
-    file_handling.c
-        |
-        v
-    data file in the WASM filesystem
-        |
-        v
-    IDBFS / IndexedDB
+save master + queue
+```
 
-The Python HTTP server is only used to serve the website files.
+This prevents dangling `Topic*` pointers inside the queue.
 
-It is NOT the database server.
+---
 
-When a topic is saved:
+## Queue
 
-    Add / Update / Delete
-            |
-            v
-    C data changes
-            |
-            v
-    save_data()
-            |
-            v
-    Browser filesystem sync
-            |
-            v
-    IndexedDB / IDBFS
+Adding to queue:
 
-If the server is stopped:
-- Saved browser data remains in the browser's persistent storage.
-- Stopping the Python server does not delete the saved browser data.
+```text
+wasm_enqueue()
+      |
+      v
+enqueue()
+      |
+      v
+save queue
+```
 
-When the server starts again:
+Removing from queue:
 
-    python -m http.server 8000 -d web
+```text
+wasm_dequeue()
+      |
+      v
+save queue
+```
+
+Clear queue:
+
+```text
+clear_queue()
+      |
+      v
+save queue
+```
+
+Study Next:
+
+```text
+remove queue front
+      |
+      v
+save queue
+      |
+      +--> mark completed
+              |
+              v
+          save master
+```
+
+---
+
+# Browser frontend
+
+The frontend is designed as a study dashboard.
+
+### Dashboard
+
+- Total topics
+- Pending topics
+- Completed topics
+- Today's queue count
+- Up Next card
+- Quick actions
+- WebAssembly status
+
+### Master Topics
+
+- Search
+- Status filter
+- Priority filter
+- Add topic
+- Edit topic
+- Delete topic
+- Mark completed directly
+- Priority/status badges
+
+### Today's Queue
+
+- Select status
+- Select priority
+- Choose number of tasks
+- Show available matching topics
+- Add to queue
+- Study Next
+- Skip
+- Clear Queue
+- Queue is persistent
+
+### Progress
+
+- Overall completion
+- Completed / pending / total
+- Queue count
+- Progress by priority
+
+### UI
+
+- Responsive layout
+- Mobile-friendly topic cards
+- Light/dark mode
+- Keyboard shortcut:
+
+```text
+Ctrl + K
+```
+
+focuses topic search.
+
+---
+
+# Build native console version
+
+From the project root:
+
+```powershell
+.\build_native.bat
+```
+
+Run:
+
+```powershell
+.\study_manager.exe
+```
+
+The native build loads both:
+
+```text
+data/data.txt
+data/queue_data.txt
+```
+
+---
+
+# Build WebAssembly
+
+Emscripten is required.
+
+From PowerShell:
+
+```powershell
+.\build_wasm.bat
+```
+
+The script generates:
+
+```text
+web/wasm.js
+web/wasm.wasm
+```
+
+The build script includes:
+
+```text
+-lidbfs.js
+```
+
+because IDBFS is required for browser persistence.
+
+---
+
+# Run the web version
+
+From the project root:
+
+```powershell
+python -m http.server 8000 -d web
+```
 
 Open:
 
-    http://localhost:8000
+```text
+http://localhost:8000
+```
 
-The application initializes WebAssembly and loads the previously stored browser data.
+After C/WASM changes:
 
-Browser persistence limitations:
-- Refreshing the page does not delete the data.
-- Closing the browser does not delete the data.
-- Stopping the local server does not delete the data.
-- Restarting the local server allows the same browser/site storage to be loaded.
-- Clearing site data / IndexedDB deletes the stored browser data.
-- Another browser does not automatically have the same data.
-- Another computer does not automatically have the same data.
+```powershell
+.\build_wasm.bat
+```
 
+Then hard refresh the browser:
 
-DATA STRUCTURES
----------------
+```text
+Ctrl + Shift + R
+```
 
-TOPIC
+---
 
-    typedef struct Topic {
-        char subject[50];
-        char chapter[50];
+# Native vs Browser
 
-        int priority;
-        /* 1 = High, 0 = Medium, -1 = Low */
+| Part | Native | Browser |
+|---|---|---|
+| Master storage | `data/data.txt` | IDBFS `/data/data.txt` |
+| Queue storage | `data/queue_data.txt` | IDBFS `/data/queue_data.txt` |
+| Interface | `main.c` | HTML/CSS/JS |
+| C core | Yes | Yes |
+| Queue persistence | Yes | Yes |
+| File handling | stdio | Emscripten FS |
+| UI | Console | Web dashboard |
 
-        int is_done;
-        /* 0 = Pending, 1 = Completed */
+---
 
-        struct Topic *next;
-        struct Topic *prev;
-    } Topic;
+# Recommended verification checklist
 
-The master collection is a doubly linked list.
+## Master list
 
-The next pointer allows forward traversal and the prev pointer allows backward traversal.
-
-
-QUEUENODE
-
-    typedef struct QueueNode {
-        Topic *topic;
-        struct QueueNode *next;
-    } QueueNode;
-
-The study queue is a singly linked list with front and back pointers.
-
-Each queue node stores a pointer to a Topic already present in the master list.
-
-
-ARCHITECTURE
-------------
-
-    StudyManagementSystem-WASM/
-    |
-    +-- include/
-    |   +-- topic.h
-    |   +-- wasm_bridge.h
-    |
-    +-- src/
-    |   +-- globals.c
-    |   +-- insert.c
-    |   +-- delete.c
-    |   +-- display.c
-    |   +-- search.c
-    |   +-- update.c
-    |   +-- filters.c
-    |   +-- progress_stat.c
-    |   +-- temp_session.c
-    |   +-- file_handling.c
-    |   +-- wasm_bridge.c
-    |
-    +-- data/
-    |   +-- data.txt
-    |
-    +-- web/
-    |   +-- index.html
-    |   +-- style.css
-    |   +-- app.js
-    |   +-- wasm.js
-    |   +-- wasm.wasm
-    |
-    +-- main.c
-    +-- README.md
-    +-- build_wasm.bat
-    +-- study_manager.exe
-
-
-FILE RESPONSIBILITIES
----------------------
-
-main.c
-------
-Contains the native console menu and program flow.
-
-It is used for the normal C application.
-
-main.c is not compiled into the browser/WASM build because the browser uses HTML and JavaScript instead of scanf()/printf() based interaction.
-
-
-include/topic.h
----------------
-Contains:
-- Topic structure
-- QueueNode structure
-- Function prototypes
-- External declarations used by the C project
-
-
-include/wasm_bridge.h
----------------------
-Contains the function declarations exposed to the browser through WebAssembly.
-
-Examples:
-- wasm_add_topic()
-- wasm_get_topics_json()
-- wasm_update_topic()
-- wasm_delete_topic()
-- wasm_enqueue()
-- wasm_dequeue()
-- wasm_save()
-
-
-src/globals.c
--------------
-Contains the actual definitions of:
-- head
-- tail
-- front
-- back
-
-
-src/insert.c
-------------
-Contains topic insertion and linked-list manipulation logic.
-
-This includes priority-based insertion and node repositioning.
-
-
-src/delete.c
-------------
-Contains topic deletion operations.
-
-
-src/search.c
-------------
-Contains topic search logic.
-
-
-src/update.c
-------------
-Contains topic update functionality such as:
-- Priority update
-- Completion status update
-
-
-src/filters.c
--------------
-Contains filtering logic for:
-- Pending topics
-- Completed topics
-- Priority-based filtering
-
-
-src/progress_stat.c
--------------------
-Contains progress calculations for:
-- Total topics
-- Completed topics
-- Pending topics
-- Completion percentage
-- Queue progress
-
-
-src/temp_session.c
-------------------
-Contains the current study-session queue logic.
-
-
-src/file_handling.c
--------------------
-Contains:
-- Saving topic data
-- Loading topic data
-
-For the native application, this uses the project's data file.
-
-For the browser build, it works with the WebAssembly filesystem.
-
-
-src/display.c
--------------
-Contains console-oriented display functions.
-
-
-src/wasm_bridge.c
------------------
-Acts as the connection between JavaScript and the existing C project.
-
-The bridge exposes browser-safe functions without rewriting the existing linked-list and queue algorithms.
-
-Examples:
-- wasm_add_topic()
-- wasm_topic_count()
-- wasm_get_topics_json()
-- wasm_update_topic()
-- wasm_delete_topic()
-- wasm_available_count()
-- wasm_enqueue()
-- wasm_queue_count()
-- wasm_get_queue_json()
-- wasm_dequeue()
-- wasm_clear_queue()
-- wasm_save()
-
-
-DESIGN DECISIONS
-----------------
-
-Priority-Sorted Insertion
--------------------------
-Topics are maintained in priority order:
-
-    High
-    Medium
-    Low
-
-The C program automatically places a new topic into the correct location.
-
-
-Repositioning Existing Nodes
-----------------------------
-When a topic's priority is changed, the existing node can be detached from its current position and inserted again at its correct priority position.
-
-This avoids creating an unnecessary second node.
-
-
-Queue Stores References
------------------------
-The queue stores:
-
-    Topic *topic;
-
-instead of copying the topic data into every queue node.
-
-This keeps the queue lightweight and means the queue refers directly to the original master topic.
-
-
-Separate Master List and Queue
-------------------------------
-The master list represents the complete study syllabus.
-
-The queue represents the topics selected for the current study session.
-
-The two structures therefore have different responsibilities.
-
-
-CONSOLE VERSION
----------------
-
-Compile - Linux / macOS:
-
-    gcc *.c -o study_manager
-
-Run:
-
-    ./study_manager
-
-
-Compile - Windows PowerShell:
-
-    gcc *.c -o study_manager.exe
-
-Run:
-
-    .\study_manager.exe
-
-
-CONSOLE MENU
-------------
-
-    --- Master Topic List ---
-
-    1. Add Topic
-    2. Search / Update / Delete a Topic
-    3. Delete Topic
-    4. Display All Topics
-    5. Filter Topics
-
-    --- Today's Study Queue ---
-
-    6. Add Topics to Today's Queue
-    7. Show Today's Queue
-    8. Study Next Topic
-
-    --- Progress ---
-
-    9. Show Progress (Master List)
-    10. Show Progress (Today's Queue)
-
-    --- Program ---
-
-    11. Save & Exit
-
-
-WEBASSEMBLY VERSION
--------------------
-
-The browser version keeps the existing C data structures and core logic while replacing the console interface with a web interface.
-
-The browser communicates with C through the WebAssembly bridge.
-
-Architecture:
-
-    HTML
-      |
-      v
-    JavaScript
-      |
-      v
-    WASM Bridge
-      |
-      v
-    Existing C Logic
-      |
-      +-- Linked List
-      +-- Queue
-      +-- Search
-      +-- Filters
-      +-- Update
-      +-- Delete
-      +-- Progress
-      +-- File Handling
-
-
-BUILD WEBASSEMBLY
------------------
-
-Emscripten must be installed and available.
-
-The project includes:
-
-    build_wasm.bat
-
-in the project root.
-
-From PowerShell, in the project root:
-
-    .\build_wasm.bat
-
-The script compiles the required C source files and generates:
-
-    web/wasm.js
-    web/wasm.wasm
-
-
-RUN THE WEB VERSION
--------------------
-
-Start the local HTTP server from the project root:
-
-    python -m http.server 8000 -d web
-
-Then open:
-
-    http://localhost:8000
-
-After making frontend or WASM changes, refresh the browser with:
-
-    Ctrl + Shift + R
-
-
-RECOMMENDED DEVELOPMENT WORKFLOW
----------------------------------
-
-Whenever C/WASM code changes:
-
-    1. Modify C / bridge code
-    2. Run .\build_wasm.bat
-    3. Start the HTTP server if it is not running
-    4. Open http://localhost:8000
-    5. Hard refresh with Ctrl + Shift + R
-
-For frontend-only changes:
-
-    1. Modify HTML / CSS / JS
-    2. Save
-    3. Refresh the browser
-
-
-BROWSER FEATURES
-----------------
-
-The browser interface provides:
-- Dashboard
-- Total topic count
-- Pending topic count
-- Completed topic count
-- Queue count
-- Add Topic
-- Edit Topic
-- Delete Topic
-- Topic search
-- Status filtering
-- Priority filtering
-- Priority badges
-- Status badges
-- Today's Study Queue
-- Queue selection by status and priority
-- Queue task count
-- Study Next
-- Clear Queue
-- Master progress
-- Queue progress
-- Save
-- WASM status
-- Browser persistence
-
-
-BROWSER TOPIC FLOW
-------------------
-
-When a topic is added:
-
-    Subject
-    Chapter
-    Priority
-    Status
-        |
-        v
-    JavaScript
-        |
-        v
-    wasm_add_topic()
-        |
-        v
-    insert_prior()
-        |
-        v
-    Master Doubly Linked List
-        |
-        v
-    save_data()
-        |
-        v
-    Browser Storage
-        |
-        v
-    JavaScript refresh
-        |
-        v
-    Master Topics Table
-
-
-BROWSER QUEUE FLOW
-------------------
-
-    Status
-    Priority
-    Number of Tasks
-            |
-            v
-        JavaScript
-            |
-            v
-    wasm_available_count()
-            |
-            v
-        wasm_enqueue()
-            |
-            v
-        QueueNode
-            |
-            v
-      Today's Queue
-
-Studying the next topic:
-
-    Study Next
-        |
-        v
-    wasm_dequeue()
-        |
-        v
-    front moves to next queue node
-
-
-STORAGE DIFFERENCE
-------------------
-
-The native version and browser version use different storage environments.
-
-    Version          Storage
-    -----------------------------------------------
-    Native C         data/data.txt
-    Browser WASM     Browser persistent storage
-    Study Queue      Session-only
-    Master Topics    Persistent
-
-The browser version does not automatically synchronize its local browser data back to the physical data/data.txt file on your Windows system.
-
-
-ROADMAP
--------
-
-- [x] Doubly linked master topic list
-- [x] Priority-based sorted insertion
-- [x] Search
-- [x] Update
-- [x] Delete
-- [x] Filters
-- [x] Progress statistics
-- [x] Separate study-session queue
-- [x] Queue enqueue/dequeue
-- [x] File-based persistence
-- [x] WebAssembly build
-- [x] Browser frontend
-- [x] WASM <-> JavaScript bridge
-- [x] Browser persistence
-- [ ] Subtopic support using a child pointer
-- [ ] Advanced analytics
-- [ ] Multi-user support
-- [ ] Authentication
-- [ ] Cloud database synchronization
-- [ ] Online deployment
-
-
-SANITY TEST
------------
-
-Before considering the project stable, test the following.
-
-Master Topics:
-- Add multiple topics
-- Add High, Medium and Low priority topics
+- Add High / Medium / Low topics
 - Confirm priority ordering
-- Search by subject
-- Search by chapter
-- Test multi-word input
-- Update a topic
-- Change priority
-- Confirm automatic re-sorting
-- Change status
-- Delete the first topic
-- Delete a middle topic
-- Delete the last topic
+- Search subject
+- Search chapter
+- Update priority
+- Confirm re-sorting
+- Update status
+- Delete first topic
+- Delete middle topic
+- Delete last topic
 
-Filters:
-- Pending
-- Completed
-- High
-- Medium
-- Low
+## Queue
 
-Study Queue:
-- Add matching topics
-- Try different status values
-- Try different priorities
-- Add multiple tasks
-- Check queue count
-- View queue
-- Study the next topic
-- Clear the queue
+- Add pending topic
+- Add completed topic
+- Try duplicate queue insertion
+- Dequeue the first topic
+- Clear queue
+- Refresh browser
+- Confirm queue is still present
+- Delete a queued master topic
+- Confirm it disappears from queue
 
-Progress:
-- Total
-- Completed
-- Pending
-- Percentage
+## Persistence
 
-Persistence - Native:
 1. Add topics.
-2. Save and exit.
-3. Start the program again.
-4. Confirm the topics are loaded from data/data.txt.
+2. Add topics to today's queue.
+3. Refresh the browser.
+4. Confirm both master list and queue return.
+5. Change a queued topic's subject/chapter.
+6. Refresh again.
+7. Confirm the queue still points to the updated topic.
+8. Delete a queued topic.
+9. Refresh again.
+10. Confirm there is no dangling queue entry.
 
-Persistence - Browser:
-1. Add topics.
-2. Refresh the page.
-3. Confirm the topics remain.
-4. Stop the local server.
-5. Start the server again.
-6. Open the application again.
-7. Confirm the browser-stored topics are still available.
+---
 
+# Important note after source changes
 
-TECHNOLOGIES
-------------
+The checked-in `web/wasm.js` and `web/wasm.wasm` are generated artifacts.
 
-Native Application:
-- C
-- GCC
-- stdio.h
-- stdlib.h
-- string.h
-- Dynamic memory allocation
-- Doubly linked list
-- Singly linked queue
-- File handling
+After modifying C files, rebuild them with:
 
-Browser Application:
-- HTML
-- CSS
-- JavaScript
-- WebAssembly
-- Emscripten
-- Emscripten virtual filesystem
-- IDBFS / IndexedDB
+```powershell
+.\build_wasm.bat
+```
 
+Do not edit generated `wasm.js` or `wasm.wasm` manually.
 
-LEARNING OBJECTIVES
--------------------
+---
 
-This project demonstrates practical use of:
+## Learning objectives
+
+This project demonstrates:
+
 - Structures
 - Pointers
-- Dynamic memory
+- Dynamic memory allocation
 - Doubly linked lists
 - Singly linked queues
-- Sorted insertion
-- Searching
+- Priority-based insertion
+- Search
 - Filtering
+- Update
 - Deletion
-- Node re-insertion
-- File handling
+- File persistence
 - Modular C
+- JavaScript ↔ C communication
 - WebAssembly
-- JavaScript-to-C communication
-- Browser persistence
-
-
-PROJECT STATUS
---------------
-
-The project contains two interfaces over the same core C data structures:
-
-                 +-------------------------+
-                 |       Core C Logic      |
-                 |                         |
-                 | Linked List             |
-                 | Queue                   |
-                 | Search                  |
-                 | Filters                 |
-                 | Update                  |
-                 | Delete                  |
-                 | Progress                |
-                 | File Handling           |
-                 +------------+------------+
-                              |
-                   +----------+----------+
-                   |                     |
-                   v                     v
-          Console Interface       WebAssembly Bridge
-                   |                     |
-                   v                     v
-                main.c           JavaScript / HTML / CSS
-
-The core purpose is to keep the data structures and application rules in C, while allowing both a terminal interface and a browser interface to use them.
+- IDBFS / IndexedDB
+- Browser application architecture

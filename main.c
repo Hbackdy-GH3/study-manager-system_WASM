@@ -34,16 +34,22 @@ void print_menu(){
 
 int main(){
 
+    currMode=save_master;
     load_data();
 
+    currMode=save_queue;
+    load_data();
+
+    currMode=save_master;
+
     int choice;
-    char subject[50], chapter[50];
+    char subject[TEXT_SIZE], chapter[TEXT_SIZE];
     int priority;
 
     while(1){
 
         print_menu();
-        scanf("%d",&choice);
+        choice=read_int();
 
         switch(choice){
 
@@ -55,21 +61,25 @@ int main(){
                 printf("\nYou selected: Add Topic\n");
 
                 printf("\nChoose where you want to add the topic:\n");
-                printf("1. Add at Front\n");
-                printf("2. Add at Back\n");
+                printf("1. Add at Front (ignores priority order)\n");
+                printf("2. Add at Back (ignores priority order)\n");
                 printf("3. Add by Priority (recommended)\n");
 
                 printf("\nChoose option 1, 2 or 3\n");
                 printf("Enter your choice: ");
-                scanf("%d",&add_choice);
+                while(1){
+                    add_choice=read_int();
+                    if(add_choice>=1 && add_choice<=3) break;
+                    printf("Choose option 1, 2 or 3 only: ");
+                }
 
                 printf("\nEnter topic details:\n");
 
                 printf("Enter subject: ");
-                scanf(" %49[^\n]",subject);
+                read_text(subject, TEXT_SIZE);
 
                 printf("Enter chapter: ");
-                scanf(" %49[^\n]",chapter);
+                read_text(chapter, TEXT_SIZE);
 
                 printf("\nChoose priority:\n");
                 printf("1 = High\n");
@@ -78,7 +88,11 @@ int main(){
 
                 printf("Choose priority 1, 0 or -1\n");
                 printf("Enter priority: ");
-                scanf("%d",&priority);
+                while(1){
+                    priority=read_int();
+                    if(priority==1 || priority==0 || priority==-1) break;
+                    printf("Choose priority 1, 0 or -1 only: ");
+                }
 
                 switch(add_choice){
 
@@ -92,6 +106,10 @@ int main(){
 
                         if(node != NULL){
                             insertfront(node);
+                            if(askYN==saveY){
+                                currMode=save_master;
+                                save_data();
+                            }
                         }
                         break;
                     }
@@ -106,6 +124,10 @@ int main(){
 
                         if(node != NULL){
                             insertback(node);
+                            if(askYN==saveY){
+                                currMode=save_master;
+                                save_data();
+                            }
                         }
                         break;
                     }
@@ -159,13 +181,6 @@ int main(){
                     printf("List is empty. Nothing to delete.\n");
                 }
                 else{
-                    printf("\nChoose where you want to delete:\n");
-                    printf("1. Front\n");
-                    printf("2. Back\n");
-                    printf("3. Anywhere in between\n");
-
-                    printf("\nChoose option 1, 2 or 3 inside delete menu.\n");
-
                     pop();
                 }
 
@@ -198,13 +213,6 @@ int main(){
             case 5:
 
                 printf("\nYou selected: Filter Topics\n");
-                printf("Choose the filter you want:\n");
-                printf("1. Pending\n");
-                printf("2. Completed\n");
-                printf("3. Specific Priority\n");
-
-                printf("\nChoose option 1, 2 or 3 inside filter menu.\n");
-
                 if(head == NULL){
                     printf("List is empty. Nothing to filter.\n");
                 }
@@ -231,7 +239,7 @@ int main(){
                     printf("Then choose High/Medium/Low.\n");
                     printf("Then enter how many tasks you want to study.\n");
 
-                    enqueue();
+                    enqueue_ask();
                 }
 
                 printf("\nNow choose your next option from the main menu.\n");
@@ -302,9 +310,15 @@ int main(){
                 printf("\nYou selected: Save & Exit\n");
                 printf("Saving all current data...\n");
 
+                currMode=save_master;
                 save_data();
 
-                printf("Data saved successfully.\n");
+                currMode=save_queue;
+                save_data();
+
+                currMode=save_master;
+                free_all_topics();
+
                 printf("Exiting Study Management System. Goodbye!\n");
 
                 return 0;
@@ -320,9 +334,13 @@ int main(){
                 break;
         }
 
-        printf("\nPress Enter and then choose your next option...\n");
-        getchar();
-        getchar();
+        printf("\nPress Enter to continue...");
+        {
+            char pause_line[64];
+            if(fgets(pause_line, sizeof(pause_line), stdin)==NULL){
+                return 0;
+            }
+        }
     }
 
     return 0;

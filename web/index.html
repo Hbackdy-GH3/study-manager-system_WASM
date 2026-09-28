@@ -1,915 +1,447 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>Study Management System</title>
-
+    <meta name="color-scheme" content="light dark">
+    <title>StudyFlow — Study Management System</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%233b82f6'/%3E%3Cpath d='M17 17h30v8H17zM17 29h30v8H17zM17 41h20v8H17z' fill='white'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
 </head>
 
-<body>
+<body class="is-loading">
+<div class="app-shell">
 
-    <div class="app">
-
-        <!-- =====================================================
-             HEADER
-             ===================================================== -->
-
-        <header class="topbar">
-
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark" aria-hidden="true">S</div>
             <div>
+                <div class="eyebrow">StudyFlow</div>
                 <h1>Study Management System</h1>
-                <p>Manage topics, study queue and progress</p>
+                <p>Focus. Learn. Complete.</p>
+            </div>
+        </div>
+
+        <div class="topbar-actions">
+            <span class="save-state" id="saveState" data-state="loading" role="status" aria-live="polite">
+                Loading…
+            </span>
+
+            <button class="icon-btn" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle light/dark mode">
+                ◐
+            </button>
+
+            <button class="secondary-btn" id="exportBtn" type="button" data-needs-wasm>
+                Export
+            </button>
+
+            <button class="secondary-btn" id="importBtn" type="button" data-needs-wasm>
+                Import
+            </button>
+
+            <input type="file" id="importFile" accept=".txt,text/plain" hidden>
+
+            <button class="primary-btn" id="saveBtn" type="button" data-needs-wasm>
+                Save
+            </button>
+        </div>
+    </header>
+
+    <main>
+
+        <section class="stats-grid" aria-label="Study summary">
+            <div class="stat-card">
+                <div class="stat-icon stat-blue">◎</div>
+                <div>
+                    <span class="stat-title">Total Topics</span>
+                    <span class="stat-value" id="totalTopics">0</span>
+                </div>
             </div>
 
-            <div class="topbar-actions">
+            <div class="stat-card">
+                <div class="stat-icon stat-amber">◷</div>
+                <div>
+                    <span class="stat-title">Pending</span>
+                    <span class="stat-value" id="pendingTopics">0</span>
+                </div>
+            </div>
 
-                <button
-                    class="secondary-btn"
-                    id="saveBtn"
-                    type="button">
-                    Save
+            <div class="stat-card">
+                <div class="stat-icon stat-green">✓</div>
+                <div>
+                    <span class="stat-title">Completed</span>
+                    <span class="stat-value" id="completedTopics">0</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon stat-violet">→</div>
+                <div>
+                    <span class="stat-title">Today's Queue</span>
+                    <span class="stat-value" id="queueCount">0</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="main-grid">
+
+            <nav class="sidebar" aria-label="Sections">
+                <div class="side-title">Workspace</div>
+
+                <button class="menu-btn active" data-section="dashboard" type="button" aria-current="page">
+                    <span>Dashboard</span>
                 </button>
 
-                <div
-                    class="wasm-status"
-                    id="wasmStatus">
-                    WASM: Loading...
-                </div>
-
-            </div>
-
-        </header>
-
-
-        <!-- =====================================================
-             MAIN CONTENT
-             ===================================================== -->
-
-        <main>
-
-            <!-- DASHBOARD STATS -->
-
-            <section class="dashboard">
-
-                <div class="stat-card">
-                    <span class="stat-title">
-                        Total Topics
-                    </span>
-
-                    <span
-                        class="stat-value"
-                        id="totalTopics">
-                        0
-                    </span>
-                </div>
-
-
-                <div class="stat-card">
-                    <span class="stat-title">
-                        Pending
-                    </span>
-
-                    <span
-                        class="stat-value"
-                        id="pendingTopics">
-                        0
-                    </span>
-                </div>
-
-
-                <div class="stat-card">
-                    <span class="stat-title">
-                        Completed
-                    </span>
-
-                    <span
-                        class="stat-value"
-                        id="completedTopics">
-                        0
-                    </span>
-                </div>
-
-
-                <div class="stat-card">
-                    <span class="stat-title">
-                        Queue
-                    </span>
-
-                    <span
-                        class="stat-value"
-                        id="queueCount">
-                        0
-                    </span>
-                </div>
-
-            </section>
-
-
-            <!-- MAIN GRID -->
-
-            <section class="main-grid">
-
-                <!-- SIDEBAR -->
-
-                <aside class="sidebar">
-
-                    <h2>Menu</h2>
-
-                    <button
-                        class="menu-btn active"
-                        data-section="dashboard"
-                        type="button">
-                        Dashboard
-                    </button>
-
-
-                    <button
-                        class="menu-btn"
-                        data-section="topics"
-                        type="button">
-                        Master Topics
-                    </button>
-
-
-                    <button
-                        class="menu-btn"
-                        data-section="queue"
-                        type="button">
-                        Today's Queue
-                    </button>
-
-
-                    <button
-                        class="menu-btn"
-                        data-section="progress"
-                        type="button">
-                        Progress
-                    </button>
-
-                </aside>
-
-
-                <!-- CONTENT -->
-
-                <section class="content">
-
-
-                    <!-- =================================================
-                         DASHBOARD
-                         ================================================= -->
-
-                    <div
-                        class="page-section active"
-                        id="dashboard-section">
-
-                        <div class="section-header">
-
-                            <div>
-                                <h2>Welcome</h2>
-
-                                <p>
-                                    Manage your syllabus,
-                                    today's tasks and progress.
-                                </p>
-                            </div>
-
-                        </div>
-
-
-                        <div class="action-grid">
-
-                            <button
-                                class="action-card"
-                                id="addTopicBtn"
-                                type="button">
-
-                                <span class="action-icon">
-                                    +
-                                </span>
-
-                                <div>
-                                    <h3>Add Topic</h3>
-                                    <p>
-                                        Add a new study topic
-                                    </p>
-                                </div>
-
-                            </button>
-
-
-                            <button
-                                class="action-card"
-                                id="searchTopicBtn"
-                                type="button">
-
-                                <span class="action-icon">
-                                    ⌕
-                                </span>
-
-                                <div>
-                                    <h3>Search Topic</h3>
-                                    <p>
-                                        Find a topic quickly
-                                    </p>
-                                </div>
-
-                            </button>
-
-
-                            <button
-                                class="action-card"
-                                id="queueBtn"
-                                type="button">
-
-                                <span class="action-icon">
-                                    →
-                                </span>
-
-                                <div>
-                                    <h3>Study Queue</h3>
-                                    <p>
-                                        Manage today's tasks
-                                    </p>
-                                </div>
-
-                            </button>
-
-
-                            <button
-                                class="action-card"
-                                id="progressBtn"
-                                type="button">
-
-                                <span class="action-icon">
-                                    ▮
-                                </span>
-
-                                <div>
-                                    <h3>Progress</h3>
-                                    <p>
-                                        View your study progress
-                                    </p>
-                                </div>
-
-                            </button>
-
-                        </div>
-
-
-                        <!-- SYSTEM STATUS -->
-
-                        <div class="wasm-test">
-
-                            <div>
-                                <h3>System Status</h3>
-
-                                <p id="wasmMessage">
-                                    Waiting for WebAssembly...
-                                </p>
-                            </div>
-
-
-                            <button
-                                id="wasmTestBtn"
-                                type="button">
-                                Test WASM
-                            </button>
-
-                        </div>
-
+                <button class="menu-btn" data-section="topics" type="button">
+                    <span>Master Topics</span>
+                </button>
+
+                <button class="menu-btn" data-section="queue" type="button">
+                    <span>Today's Queue</span>
+                    <span class="menu-count" id="menuQueueCount" hidden>0</span>
+                </button>
+
+                <button class="menu-btn" data-section="progress" type="button">
+                    <span>Progress</span>
+                </button>
+
+                <div class="sidebar-note">
+                    <span class="mini-dot"></span>
+                    <div>
+                        <strong>Runs in WebAssembly</strong>
+                        <span>Data stays in your browser.</span>
                     </div>
+                </div>
+            </nav>
 
+            <section class="content">
 
-                    <!-- =================================================
-                         MASTER TOPICS
-                         ================================================= -->
+                <!-- DASHBOARD -->
+                <div class="page-section active" id="dashboard-section">
 
-                    <div
-                        class="page-section"
-                        id="topics-section">
-
-                        <div class="section-header">
-
-                            <div>
-                                <h2>Master Topics</h2>
-
-                                <p>
-                                    Complete list of your study topics.
-                                </p>
-                            </div>
-
-
-                            <button
-                                class="primary-btn"
-                                id="openAddTopic"
-                                type="button">
-                                + Add Topic
-                            </button>
-
-                        </div>
-
-
-                        <!-- SEARCH + FILTER -->
-
-                        <div class="toolbar">
-
-                            <input
-                                type="text"
-                                id="topicSearch"
-                                class="search-input"
-                                placeholder="Search subject or chapter...">
-
-
-                            <select
-                                id="statusFilter"
-                                class="filter-select">
-
-                                <option value="all">
-                                    All Status
-                                </option>
-
-                                <option value="0">
-                                    Pending
-                                </option>
-
-                                <option value="1">
-                                    Completed
-                                </option>
-
-                            </select>
-
-
-                            <select
-                                id="priorityFilter"
-                                class="filter-select">
-
-                                <option value="all">
-                                    All Priority
-                                </option>
-
-                                <option value="1">
-                                    High
-                                </option>
-
-                                <option value="0">
-                                    Medium
-                                </option>
-
-                                <option value="-1">
-                                    Low
-                                </option>
-
-                            </select>
-
-                        </div>
-
-
-                        <!-- TABLE -->
-
-                        <div class="topics-table-wrapper">
-
-                            <table>
-
-                                <thead>
-
-                                    <tr>
-                                        <th>Subject</th>
-                                        <th>Chapter</th>
-                                        <th>Priority</th>
-                                        <th>Status</th>
-                                        <th>Action</th>
-                                    </tr>
-
-                                </thead>
-
-
-                                <tbody id="topicsTableBody">
-
-                                    <tr>
-                                        <td
-                                            colspan="5"
-                                            class="empty-state">
-                                            No topics available yet.
-                                        </td>
-                                    </tr>
-
-                                </tbody>
-
-                            </table>
-
-                        </div>
-
-                    </div>
-
-
-                    <!-- =================================================
-                         QUEUE
-                         ================================================= -->
-
-                    <div
-                        class="page-section"
-                        id="queue-section">
-
-                        <div class="section-header">
-
-                            <div>
-                                <h2>
-                                    Today's Study Queue
-                                </h2>
-
-                                <p>
-                                    Select matching topics
-                                    for today's session.
-                                </p>
-                            </div>
-
-                        </div>
-
-
-                        <!-- QUEUE BUILDER -->
-
-                        <div class="queue-builder">
-
-                            <div class="field">
-
-                                <label for="queueStatus">
-                                    Status
-                                </label>
-
-                                <select id="queueStatus">
-
-                                    <option value="0">
-                                        Pending
-                                    </option>
-
-                                    <option value="1">
-                                        Completed
-                                    </option>
-
-                                </select>
-
-                            </div>
-
-
-                            <div class="field">
-
-                                <label for="queuePriority">
-                                    Priority
-                                </label>
-
-                                <select id="queuePriority">
-
-                                    <option value="1">
-                                        High
-                                    </option>
-
-                                    <option value="0">
-                                        Medium
-                                    </option>
-
-                                    <option value="-1">
-                                        Low
-                                    </option>
-
-                                </select>
-
-                            </div>
-
-
-                            <div class="field">
-
-                                <label for="queueNumber">
-                                    Number of Tasks
-                                </label>
-
-                                <input
-                                    type="number"
-                                    id="queueNumber"
-                                    min="1"
-                                    value="1">
-
-                            </div>
-
-
-                            <div class="queue-available">
-                                Available:
-                                <strong id="queueAvailable">
-                                    0
-                                </strong>
-                            </div>
-
-
-                            <button
-                                class="primary-btn"
-                                id="addToQueueBtn"
-                                type="button">
-                                Add to Queue
-                            </button>
-
-                        </div>
-
-
-                        <!-- QUEUE ACTIONS -->
-
-                        <div class="queue-actions">
-
-                            <button
-                                class="primary-btn"
-                                id="studyNextBtn"
-                                type="button">
-                                Study Next
-                            </button>
-
-
-                            <button
-                                class="secondary-btn"
-                                id="clearQueueBtn"
-                                type="button">
-                                Clear Queue
-                            </button>
-
-                        </div>
-
-
-                        <!-- QUEUE LIST -->
-
-                        <div
-                            class="queue-list"
-                            id="queueList">
-
-                            <div class="empty-state">
-                                No topics in today's queue.
-                            </div>
-
-                        </div>
-
-                    </div>
-
-
-                    <!-- =================================================
-                         PROGRESS
-                         ================================================= -->
-
-                    <div
-                        class="page-section"
-                        id="progress-section">
-
-                        <div class="section-header">
-
-                            <div>
-                                <h2>Progress</h2>
-
-                                <p>
-                                    Track your overall study progress.
-                                </p>
-                            </div>
-
-                        </div>
-
-
-                        <div class="progress-card">
-
-                            <div class="progress-row">
-
-                                <span>
-                                    Overall Completion
-                                </span>
-
-                                <strong id="progressPercent">
-                                    0%
-                                </strong>
-
-                            </div>
-
-
-                            <div class="progress-bar">
-
-                                <div
-                                    class="progress-fill"
-                                    id="progressFill"
-                                    style="width: 0%;">
-                                </div>
-
-                            </div>
-
-
-                            <div class="progress-summary">
-
-                                <span>
-                                    Total:
-                                    <strong id="progressTotal">
-                                        0
-                                    </strong>
-                                </span>
-
-                                <span>
-                                    Completed:
-                                    <strong id="progressCompleted">
-                                        0
-                                    </strong>
-                                </span>
-
-                                <span>
-                                    Pending:
-                                    <strong id="progressPending">
-                                        0
-                                    </strong>
-                                </span>
-
-                            </div>
-
-                        </div>
-
-
-                        <div class="queue-progress-card">
-
-                            <h3>Today's Queue</h3>
-
+                    <section class="hero-panel">
+                        <div class="hero-copy">
+                            <span class="hero-kicker">YOUR STUDY COMMAND CENTER</span>
+                            <h2>Make progress one topic at a time.</h2>
                             <p>
-                                Remaining tasks:
-                                <strong id="queueProgressCount">
-                                    0
-                                </strong>
+                                Keep your syllabus organized, build today's study queue,
+                                and see exactly how far you've come.
                             </p>
 
+                            <div class="hero-actions">
+                                <button class="primary-btn hero-btn" data-action="add" type="button" data-needs-wasm>
+                                    + Add Topic
+                                </button>
+                                <button class="secondary-btn hero-btn" data-go="queue" type="button">
+                                    Plan Today's Queue
+                                </button>
+                            </div>
                         </div>
 
+                        <div class="hero-visual" aria-hidden="true">
+                            <div class="hero-orbit orbit-one"></div>
+                            <div class="hero-orbit orbit-two"></div>
+                            <div class="hero-core">S</div>
+                        </div>
+                    </section>
+
+                    <div class="section-header compact-header">
+                        <div>
+                            <span class="section-kicker">STAY ON TRACK</span>
+                            <h2>Today's focus</h2>
+                            <p>Your next queued topic appears here.</p>
+                        </div>
                     </div>
 
-                </section>
+                    <div class="up-next" id="upNextCard">
+                        <div class="empty-state">Loading…</div>
+                    </div>
+
+                    <div class="action-grid">
+                        <button class="action-card" data-action="add" type="button" data-needs-wasm>
+                            <span class="action-icon blue">+</span>
+                            <span>
+                                <span class="action-title">Add Topic</span>
+                                <span class="action-sub">Add a new subject or chapter</span>
+                            </span>
+                        </button>
+
+                        <button class="action-card" data-go="topics" data-focus="topicSearch" type="button">
+                            <span class="action-icon violet">⌕</span>
+                            <span>
+                                <span class="action-title">Find a Topic</span>
+                                <span class="action-sub">Search your complete syllabus</span>
+                            </span>
+                        </button>
+
+                        <button class="action-card" data-go="queue" type="button">
+                            <span class="action-icon amber">→</span>
+                            <span>
+                                <span class="action-title">Build Queue</span>
+                                <span class="action-sub">Pick what you want to study next</span>
+                            </span>
+                        </button>
+
+                        <button class="action-card" data-go="progress" type="button">
+                            <span class="action-icon green">↗</span>
+                            <span>
+                                <span class="action-title">View Progress</span>
+                                <span class="action-sub">Track completion by priority</span>
+                            </span>
+                        </button>
+                    </div>
+
+                    <div class="system-card">
+                        <div class="system-copy">
+                            <div class="system-status-icon">W</div>
+                            <div>
+                                <h3>WebAssembly engine</h3>
+                                <p id="wasmMessage">Waiting for WebAssembly…</p>
+                            </div>
+                        </div>
+                        <button class="secondary-btn small-btn" id="wasmTestBtn" type="button" data-needs-wasm>
+                            Test WASM
+                        </button>
+                    </div>
+                </div>
+
+                <!-- TOPICS -->
+                <div class="page-section" id="topics-section">
+
+                    <div class="section-header">
+                        <div>
+                            <span class="section-kicker">MASTER LIST</span>
+                            <h2>All study topics</h2>
+                            <p>Priority-sorted by the C doubly linked list.</p>
+                        </div>
+
+                        <button class="primary-btn" data-action="add" type="button" data-needs-wasm>
+                            + Add Topic
+                        </button>
+                    </div>
+
+                    <div class="toolbar">
+                        <div class="search-wrap">
+                            <span class="search-symbol">⌕</span>
+                            <input type="search" id="topicSearch" class="search-input"
+                                   placeholder="Search subject or chapter…" aria-label="Search topics">
+                            <kbd>Ctrl K</kbd>
+                        </div>
+
+                        <select id="statusFilter" class="filter-select" aria-label="Filter by status">
+                            <option value="all">All Status</option>
+                            <option value="0">Pending</option>
+                            <option value="1">Completed</option>
+                        </select>
+
+                        <select id="priorityFilter" class="filter-select" aria-label="Filter by priority">
+                            <option value="all">All Priority</option>
+                            <option value="1">High</option>
+                            <option value="0">Medium</option>
+                            <option value="-1">Low</option>
+                        </select>
+                    </div>
+
+                    <p class="result-count" id="resultCount"></p>
+
+                    <div class="topics-table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th class="col-done">Done</th>
+                                    <th>Subject</th>
+                                    <th>Chapter</th>
+                                    <th>Priority</th>
+                                    <th>Status</th>
+                                    <th class="col-actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="topicsTableBody">
+                                <tr>
+                                    <td colspan="6" class="empty-state">No topics yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- QUEUE -->
+                <div class="page-section" id="queue-section">
+
+                    <div class="section-header">
+                        <div>
+                            <span class="section-kicker">STUDY SESSION</span>
+                            <h2>Today's queue</h2>
+                            <p>Build a focused sequence from your master topics.</p>
+                        </div>
+                    </div>
+
+                    <form class="queue-builder" id="queueForm" novalidate>
+                        <div class="field">
+                            <label for="queueStatus">Status</label>
+                            <select id="queueStatus">
+                                <option value="0">Pending</option>
+                                <option value="1">Completed</option>
+                            </select>
+                        </div>
+
+                        <div class="field">
+                            <label for="queuePriority">Priority</label>
+                            <select id="queuePriority">
+                                <option value="1">High</option>
+                                <option value="0">Medium</option>
+                                <option value="-1">Low</option>
+                            </select>
+                        </div>
+
+                        <div class="field">
+                            <label for="queueNumber">Tasks to add</label>
+                            <input id="queueNumber" type="number" min="1" value="1" step="1">
+                        </div>
+
+                        <div class="queue-available">
+                            <span>Available</span>
+                            <strong id="queueAvailable">0</strong>
+                        </div>
+
+                        <button class="primary-btn" id="addToQueueBtn" type="submit" data-needs-wasm>
+                            Add to Queue
+                        </button>
+                    </form>
+
+                    <div class="queue-actions">
+                        <span class="muted">Your queue is saved with your browser data.</span>
+                        <button class="danger-btn small-btn" id="clearQueueBtn" type="button" data-needs-wasm>
+                            Clear Queue
+                        </button>
+                    </div>
+
+                    <div class="queue-list" id="queueList">
+                        <div class="empty-state">No topics in today's queue.</div>
+                    </div>
+                </div>
+
+                <!-- PROGRESS -->
+                <div class="page-section" id="progress-section">
+
+                    <div class="section-header">
+                        <div>
+                            <span class="section-kicker">ANALYTICS</span>
+                            <h2>Your progress</h2>
+                            <p>A quick view of completion across your syllabus.</p>
+                        </div>
+                    </div>
+
+                    <div class="progress-card progress-hero">
+                        <div class="progress-row">
+                            <div>
+                                <span class="section-kicker">OVERALL COMPLETION</span>
+                                <h3>Keep the streak going</h3>
+                            </div>
+                            <strong id="progressPercent">0%</strong>
+                        </div>
+
+                        <div class="progress-bar" id="progressBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                            <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+                        </div>
+
+                        <div class="progress-summary">
+                            <span><strong id="progressCompleted">0</strong> completed</span>
+                            <span><strong id="progressPending">0</strong> pending</span>
+                            <span><strong id="progressTotal">0</strong> total</span>
+                            <span><strong id="queueProgressCount">0</strong> in queue</span>
+                        </div>
+                    </div>
+
+                    <div class="progress-card">
+                        <div class="progress-row">
+                            <h3 class="card-title">Progress by priority</h3>
+                            <span class="muted">High → Medium → Low</span>
+                        </div>
+                        <div id="priorityProgress"></div>
+                    </div>
+                </div>
 
             </section>
+        </section>
+    </main>
 
-        </main>
-
-    </div>
-
-
-    <!-- =========================================================
-         ADD TOPIC MODAL
-         ========================================================= -->
-
-    <div
-        class="modal hidden"
-        id="topicModal">
-
-        <div class="modal-box">
-
+    <!-- TOPIC DIALOG -->
+    <dialog class="modal-box" id="topicDialog">
+        <form id="topicForm" method="dialog" novalidate>
             <div class="modal-header">
-
-                <h2>Add Topic</h2>
-
-                <button
-                    id="closeModal"
-                    type="button">
-                    ×
-                </button>
-
+                <div>
+                    <span class="section-kicker">TOPIC</span>
+                    <h2 id="topicDialogTitle">Add Topic</h2>
+                </div>
+                <button class="icon-btn" type="button" data-close aria-label="Close">×</button>
             </div>
 
+            <input type="hidden" id="editIndex" value="-1">
 
-            <form id="topicForm">
+            <p class="form-hint">Subject and chapter must be unique together.</p>
+            <p class="form-error" id="topicFormError" hidden></p>
 
+            <div class="form-row">
                 <label>
-
                     Subject
-
-                    <input
-                        type="text"
-                        id="subjectInput"
-                        placeholder="SubjectName"
-                        maxlength="49"
-                        required>
-
+                    <input type="text" id="subjectInput" maxlength="49" placeholder="e.g. Signals & Systems" required>
                 </label>
 
-
                 <label>
-
                     Chapter
-
-                    <input
-                        type="text"
-                        id="chapterInput"
-                        placeholder="ChapterName"
-                        maxlength="49"
-                        required>
-
+                    <input type="text" id="chapterInput" maxlength="49" placeholder="e.g. Fourier Series" required>
                 </label>
-
-
-                <label>
-
-                    Priority
-
-                    <select
-                        id="priorityInput"
-                        required>
-
-                        <option value="1">
-                            High
-                        </option>
-
-                        <option value="0">
-                            Medium
-                        </option>
-
-                        <option value="-1">
-                            Low
-                        </option>
-
-                    </select>
-
-                </label>
-
-
-                <label>
-
-                    Status
-
-                    <select
-                        id="statusInput"
-                        required>
-
-                        <option value="0">
-                            Pending
-                        </option>
-
-                        <option value="1">
-                            Completed
-                        </option>
-
-                    </select>
-
-                </label>
-
-
-                <div class="modal-actions">
-
-                    <button
-                        type="button"
-                        class="secondary-btn"
-                        id="cancelAddTopic">
-                        Cancel
-                    </button>
-
-
-                    <button
-                        type="submit"
-                        class="primary-btn">
-                        Add Topic
-                    </button>
-
-                </div>
-
-            </form>
-
-        </div>
-
-    </div>
-
-
-    <!-- =========================================================
-         EDIT TOPIC MODAL
-         ========================================================= -->
-
-    <div
-        class="modal hidden"
-        id="editModal">
-
-        <div class="modal-box">
-
-            <div class="modal-header">
-
-                <h2>Edit Topic</h2>
-
-                <button
-                    id="closeEditModal"
-                    type="button">
-                    ×
-                </button>
-
             </div>
 
-
-            <form id="editForm">
-
-                <input
-                    type="hidden"
-                    id="editIndex">
-
-
+            <div class="form-row">
                 <label>
-
-                    Subject
-
-                    <input
-                        type="text"
-                        id="editSubject"
-                        maxlength="49"
-                        required>
-
-                </label>
-
-
-                <label>
-
-                    Chapter
-
-                    <input
-                        type="text"
-                        id="editChapter"
-                        maxlength="49"
-                        required>
-
-                </label>
-
-
-                <label>
-
                     Priority
-
-                    <select
-                        id="editPriority"
-                        required>
-
-                        <option value="1">
-                            High
-                        </option>
-
-                        <option value="0">
-                            Medium
-                        </option>
-
-                        <option value="-1">
-                            Low
-                        </option>
-
+                    <select id="priorityInput">
+                        <option value="1">High</option>
+                        <option value="0">Medium</option>
+                        <option value="-1">Low</option>
                     </select>
-
                 </label>
-
 
                 <label>
-
                     Status
-
-                    <select
-                        id="editStatus"
-                        required>
-
-                        <option value="0">
-                            Pending
-                        </option>
-
-                        <option value="1">
-                            Completed
-                        </option>
-
+                    <select id="statusInput">
+                        <option value="0">Pending</option>
+                        <option value="1">Completed</option>
                     </select>
-
                 </label>
+            </div>
 
+            <div class="modal-actions">
+                <button class="secondary-btn" type="button" data-close>Cancel</button>
+                <button class="primary-btn" id="topicSubmitBtn" type="submit">Add Topic</button>
+            </div>
+        </form>
+    </dialog>
 
-                <div class="modal-actions">
-
-                    <button
-                        type="button"
-                        class="secondary-btn"
-                        id="cancelEdit">
-                        Cancel
-                    </button>
-
-
-                    <button
-                        type="submit"
-                        class="primary-btn">
-                        Save Changes
-                    </button>
-
-                </div>
-
-            </form>
-
+    <!-- CONFIRM DIALOG -->
+    <dialog class="modal-box confirm-box" id="confirmDialog">
+        <div class="modal-header">
+            <div>
+                <span class="section-kicker">CONFIRM</span>
+                <h2 id="confirmTitle">Are you sure?</h2>
+            </div>
         </div>
 
-    </div>
+        <p id="confirmMessage"></p>
 
+        <div class="modal-actions">
+            <button class="secondary-btn" id="confirmCancel" type="button">Cancel</button>
+            <button class="danger-btn" id="confirmAlt" type="button" hidden>Replace</button>
+            <button class="danger-btn" id="confirmOk" type="button">Delete</button>
+        </div>
+    </dialog>
 
-    <!-- =========================================================
-         SCRIPTS
-         ========================================================= -->
+    <div class="toast-area" id="toastArea" aria-live="polite" aria-atomic="true"></div>
+</div>
 
-    <!-- IMPORTANT:
-         app.js comes BEFORE wasm.js because it defines Module. -->
-
-    <script src="app.js"></script>
-    <script src="wasm.js"></script>
-
+<script src="app.js"></script>
+<script src="wasm.js"></script>
 </body>
-
 </html>

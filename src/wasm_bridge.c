@@ -8,127 +8,95 @@
 #include "topic.h"
 #include "wasm_bridge.h"
 
-
-/*
-=========================================================
-EXISTING PROJECT GLOBALS
-=========================================================
-*/
-
-extern Topic* head;
-extern Topic* tail;
-
-extern QueueNode* front;
-extern QueueNode* back;
-
-
 /*
 =========================================================
 JSON BUFFER
 =========================================================
 */
 
-static char* json_buffer = NULL;
-static size_t json_capacity = 0;
-static size_t json_length = 0;
+static char* json_buffer=NULL;
+static size_t json_capacity=0;
+static size_t json_length=0;
 
+static int json_reserve(size_t extra){
+    size_t required=json_length+extra+1;
 
-static int json_reserve(size_t extra)
-{
-    size_t required = json_length + extra + 1;
-
-    if (required <= json_capacity)
+    if(required<=json_capacity){
         return 1;
+    }
 
-    size_t new_capacity =
-        (json_capacity == 0) ? 4096 : json_capacity;
+    size_t new_capacity=(json_capacity==0) ? 4096 : json_capacity;
 
-    while (new_capacity < required)
-        new_capacity *= 2;
+    while(new_capacity<required){
+        new_capacity*=2;
+    }
 
-    char* new_buffer =
-        (char*)realloc(json_buffer, new_capacity);
+    char* new_buffer=(char*)realloc(json_buffer,new_capacity);
 
-    if (new_buffer == NULL)
+    if(new_buffer==NULL){
         return 0;
+    }
 
-    json_buffer = new_buffer;
-    json_capacity = new_capacity;
+    json_buffer=new_buffer;
+    json_capacity=new_capacity;
 
     return 1;
 }
 
+static void json_reset(void){
+    json_length=0;
 
-static void json_reset(void)
-{
-    json_length = 0;
-
-    if (json_buffer != NULL)
-        json_buffer[0] = '\0';
+    if(json_buffer!=NULL){
+        json_buffer[0]='\0';
+    }
 }
 
-
-static void json_append_raw(const char* text)
-{
-    if (text == NULL)
+static void json_append_raw(const char* text){
+    if(text==NULL){
         return;
+    }
 
-    size_t length = strlen(text);
+    size_t length=strlen(text);
 
-    if (!json_reserve(length))
+    if(!json_reserve(length)){
         return;
+    }
 
-    memcpy(
-        json_buffer + json_length,
-        text,
-        length
-    );
-
-    json_length += length;
-    json_buffer[json_length] = '\0';
+    memcpy(json_buffer+json_length,text,length);
+    json_length+=length;
+    json_buffer[json_length]='\0';
 }
 
-
-static void json_append_format(const char* format, ...)
-{
+static void json_append_format(const char* format,...){
     char temp[512];
 
     va_list args;
-    va_start(args, format);
+    va_start(args,format);
 
-    int written =
-        vsnprintf(
-            temp,
-            sizeof(temp),
-            format,
-            args
-        );
+    int written=vsnprintf(
+        temp,
+        sizeof(temp),
+        format,
+        args
+    );
 
     va_end(args);
 
-    if (written <= 0)
+    if(written<=0 || (size_t)written>=sizeof(temp)){
         return;
-
-    if ((size_t)written >= sizeof(temp))
-        return;
+    }
 
     json_append_raw(temp);
 }
 
-
-static void json_append_string(const char* text)
-{
+static void json_append_string(const char* text){
     json_append_raw("\"");
 
-    if (text != NULL)
-    {
-        while (*text != '\0')
-        {
-            unsigned char c =
-                (unsigned char)*text;
+    if(text!=NULL){
+        while(*text!='\0'){
+            unsigned char c=(unsigned char)*text;
 
-            switch (c)
-            {
+            switch(c){
                 case '\"':
                     json_append_raw("\\\"");
                     break;
@@ -150,23 +118,15 @@ static void json_append_string(const char* text)
                     break;
 
                 default:
-                    if (c < 32)
-                    {
-                        json_append_format(
-                            "\\u%04x",
-                            c
-                        );
+                    if(c<32){
+                        json_append_format("\\u%04x",c);
                     }
-                    else
-                    {
+                    else{
                         char one[2];
-
-                        one[0] = (char)c;
-                        one[1] = '\0';
-
+                        one[0]=(char)c;
+                        one[1]='\0';
                         json_append_raw(one);
                     }
-
                     break;
             }
 
@@ -177,124 +137,99 @@ static void json_append_string(const char* text)
     json_append_raw("\"");
 }
 
-
 /*
 =========================================================
-HELPERS
+VALIDATION / LOOKUP HELPERS
 =========================================================
 */
 
-static int valid_priority(int priority)
-{
-    return (
-        priority == 1 ||
-        priority == 0 ||
-        priority == -1
-    );
+static int valid_priority(int priority){
+    return priority==1 || priority==0 || priority==-1;
 }
 
-
-static int valid_status(int status)
-{
-    return (
-        status == 0 ||
-        status == 1
-    );
+static int valid_status(int status){
+    return status==0 || status==1;
 }
 
+static int valid_text(const char* text){
+    if(text==NULL || text[0]=='\0'){
+        return 0;
+    }
 
-static Topic* topic_at_index(int index)
-{
-    if (index < 0)
+    if(strlen(text)>=TEXT_SIZE){
+        return 0;
+    }
+
+    if(strpbrk(text,",\r\n")!=NULL){
+        return 0;
+    }
+
+    return 1;
+}
+
+static Topic* topic_at_index(int index){
+    if(index<0){
         return NULL;
+    }
 
-    Topic* current = head;
-    int i = 0;
+    Topic* current=head;
+    int i=0;
 
-    while (current != NULL)
-    {
-        if (i == index)
+    while(current!=NULL){
+        if(i==index){
             return current;
+        }
 
-        current = current->next;
+        current=current->next;
         i++;
     }
 
     return NULL;
 }
 
+static int index_of_topic(Topic* target){
+    Topic* current=head;
+    int i=0;
 
-static int queue_contains_topic(Topic* target)
-{
-    QueueNode* current = front;
-
-    while (current != NULL)
-    {
-        if (current->topic == target)
-            return 1;
-
-        current = current->next;
-    }
-
-    return 0;
-}
-
-
-static void queue_remove_topic(Topic* target)
-{
-    QueueNode* current = front;
-    QueueNode* previous = NULL;
-
-    while (current != NULL)
-    {
-        QueueNode* next = current->next;
-
-        if (current->topic == target)
-        {
-            if (previous == NULL)
-                front = current->next;
-            else
-                previous->next = current->next;
-
-            if (current == back)
-                back = previous;
-
-            free(current);
-        }
-        else
-        {
-            previous = current;
+    while(current!=NULL){
+        if(current==target){
+            return i;
         }
 
-        current = next;
+        current=current->next;
+        i++;
     }
 
-    if (front == NULL)
-        back = NULL;
+    return -1;
 }
 
-
-static void link_topic_after_removal_free(Topic* node)
-{
-    if (node == NULL)
+/*
+    Central browser-side persistence helper.
+    currMode decides which file save_data() writes.
+*/
+static void save_master_and_queue(void){
+    if(askYN!=saveY){
         return;
+    }
 
-    if (node->prev != NULL)
-        node->prev->next = node->next;
-    else
-        head = node->next;
+    currMode=save_master;
+    save_data();
 
-    if (node->next != NULL)
-        node->next->prev = node->prev;
-    else
-        tail = node->prev;
+    currMode=save_queue;
+    save_data();
 
-    node->next = NULL;
-    node->prev = NULL;
-
-    free(node);
+    currMode=save_master;
 }
 
+static void load_master_and_queue(void){
+    currMode=save_master;
+    load_data();
+
+    currMode=save_queue;
+    load_data();
+
+    currMode=save_master;
+}
 
 /*
 =========================================================
@@ -303,79 +238,144 @@ WASM TEST
 */
 
 EMSCRIPTEN_KEEPALIVE
-void wasm_test(void)
-{
+int wasm_test(void){
     printf("WASM is working!\n");
+    return 1;
 }
-
 
 /*
 =========================================================
-INIT / SAVE
+INIT / SAVE / RELOAD
 =========================================================
 */
 
 EMSCRIPTEN_KEEPALIVE
-void wasm_init(void)
-{
+void wasm_init(void){
+    if(head!=NULL){
+        return;
+    }
+
+    load_master_and_queue();
+}
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_save(void){
+    save_master_and_queue();
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_reload(void){
     /*
-        load_data() is called only after the JS side
-        has prepared the browser filesystem.
+        Used by browser Import.
+        Importing a new master list intentionally starts with
+        an empty persisted study queue.
     */
-    if (head == NULL)
-        load_data();
+    free_all_topics();
+
+    if(askYN==saveY){
+        currMode=save_queue;
+        save_data();
+        currMode=save_master;
+    }
+
+    load_master_and_queue();
+
+    return wasm_topic_count();
 }
-
-
 EMSCRIPTEN_KEEPALIVE
-void wasm_save(void)
-{
+int wasm_import_topics_append(char* text){
+    if(text==NULL || text[0]=='\0'){
+        return 0;
+    }
+
+    int added=0;
+
+    enum when2save oldAskYN=askYN;
+    askYN=saveN;
+
+    char* line=strtok(text, "\n");
+
+    while(line!=NULL){
+
+        char subject[TEXT_SIZE];
+        char chapter[TEXT_SIZE];
+        int priority;
+        int status;
+
+        if(
+            sscanf(
+                line,
+                " %49[^,],%49[^,],%d,%d",
+                subject,
+                chapter,
+                &priority,
+                &status
+            )==4
+        ){
+            if(
+                valid_text(subject) &&
+                valid_text(chapter) &&
+                valid_priority(priority) &&
+                valid_status(status)
+            ){
+                int before=wasm_topic_count();
+
+                insert_prior(
+                    subject,
+                    chapter,
+                    priority,
+                    status
+                );
+
+                if(wasm_topic_count()>before){
+                    added++;
+                }
+            }
+        }
+
+        line=strtok(NULL, "\n");
+    }
+
+    askYN=oldAskYN;
+
+    /*
+        Existing queue ko preserve karna hai.
+        Sirf master list ko save karo.
+    */
+    currMode=save_master;
     save_data();
+
+    return added;
 }
-
-
 /*
 =========================================================
-ADD TOPIC
+TOPIC: ADD
 =========================================================
 */
 
 EMSCRIPTEN_KEEPALIVE
-void wasm_add_topic(
+int wasm_add_topic(
     char* subject,
     char* chapter,
     int priority,
     int status
-)
-{
-    if (subject == NULL || chapter == NULL)
-        return;
+){
+    if(!valid_text(subject) || !valid_text(chapter)){
+        return 0;
+    }
 
-    if (subject[0] == '\0' || chapter[0] == '\0')
-        return;
+    if(!valid_priority(priority) || !valid_status(status)){
+        return 0;
+    }
 
-    if (strlen(subject) >= 50 || strlen(chapter) >= 50)
-        return;
+    int before=wasm_topic_count();
 
-    if (!valid_priority(priority))
-        return;
+    askYN=saveY;
+    insert_prior(subject,chapter,priority,status);
+    currMode=save_master;
 
-    if (!valid_status(status))
-        return;
-
-    /*
-        Reuse the existing C insertion logic.
-        insert_prior() already handles sorted insertion
-        and automatic save_data().
-    */
-    insert_prior(
-        subject,
-        chapter,
-        priority,
-        status
-    );
+    return wasm_topic_count()>before;
 }
-
 
 /*
 =========================================================
@@ -384,21 +384,17 @@ TOPIC COUNT
 */
 
 EMSCRIPTEN_KEEPALIVE
-int wasm_topic_count(void)
-{
-    int count = 0;
+int wasm_topic_count(void){
+    int count=0;
+    Topic* current=head;
 
-    Topic* current = head;
-
-    while (current != NULL)
-    {
+    while(current!=NULL){
         count++;
-        current = current->next;
+        current=current->next;
     }
 
     return count;
 }
-
 
 /*
 =========================================================
@@ -407,29 +403,23 @@ TOPICS -> JSON
 */
 
 EMSCRIPTEN_KEEPALIVE
-const char* wasm_get_topics_json(void)
-{
+const char* wasm_get_topics_json(void){
     json_reset();
-
     json_append_raw("[");
 
-    Topic* current = head;
-    int index = 0;
-    int first = 1;
+    Topic* current=head;
+    int index=0;
+    int first=1;
 
-    while (current != NULL)
-    {
-        if (!first)
+    while(current!=NULL){
+        if(!first){
             json_append_raw(",");
+        }
 
-        first = 0;
-
+        first=0;
         json_append_raw("{");
 
-        json_append_format(
-            "\"index\":%d",
-            index
-        );
+        json_append_format("\"index\":%d",index);
 
         json_append_raw(",\"subject\":");
         json_append_string(current->subject);
@@ -437,34 +427,23 @@ const char* wasm_get_topics_json(void)
         json_append_raw(",\"chapter\":");
         json_append_string(current->chapter);
 
-        json_append_format(
-            ",\"priority\":%d",
-            current->priority
-        );
-
-        json_append_format(
-            ",\"status\":%d",
-            current->is_done
-        );
+        json_append_format(",\"priority\":%d",current->priority);
+        json_append_format(",\"status\":%d",current->is_done);
 
         json_append_raw("}");
 
-        current = current->next;
+        current=current->next;
         index++;
     }
 
     json_append_raw("]");
 
-    if (json_buffer == NULL)
-        return "[]";
-
-    return json_buffer;
+    return json_buffer==NULL ? "[]" : json_buffer;
 }
-
 
 /*
 =========================================================
-UPDATE TOPIC
+TOPIC: UPDATE
 =========================================================
 */
 
@@ -475,105 +454,65 @@ int wasm_update_topic(
     char* chapter,
     int priority,
     int status
-)
-{
-    if (subject == NULL || chapter == NULL)
+){
+    if(!valid_text(subject) || !valid_text(chapter)){
         return 0;
+    }
 
-    if (subject[0] == '\0' || chapter[0] == '\0')
+    if(!valid_priority(priority) || !valid_status(status)){
         return 0;
+    }
 
-    if (strlen(subject) >= 50 || strlen(chapter) >= 50)
+    Topic* node=topic_at_index(index);
+
+    if(node==NULL){
         return 0;
+    }
 
-    if (!valid_priority(priority) ||
-        !valid_status(status))
-        return 0;
+    int priority_changed=(node->priority!=priority);
 
-    Topic* node =
-        topic_at_index(index);
+    strncpy(node->subject,subject,TEXT_SIZE-1);
+    node->subject[TEXT_SIZE-1]='\0';
 
-    if (node == NULL)
-        return 0;
+    strncpy(node->chapter,chapter,TEXT_SIZE-1);
+    node->chapter[TEXT_SIZE-1]='\0';
 
+    node->is_done=status;
 
-    /*
-        Changing priority requires removing the node
-        from the sorted list and inserting it again.
-    */
-    int priority_changed =
-        node->priority != priority;
-
-
-    strcpy(
-        node->subject,
-        subject
-    );
-
-    strcpy(
-        node->chapter,
-        chapter
-    );
-
-    node->is_done = status;
-
-
-    if (priority_changed)
-    {
-        /*
-            Reuse the existing detach function.
-            remove_node() does NOT free the node.
-        */
+    if(priority_changed){
         remove_node(node);
-
-        node->priority = priority;
-
+        node->priority=priority;
         insert_node_by_priority(node);
     }
-    else
-    {
-        node->priority = priority;
-
-        save_data();
+    else{
+        node->priority=priority;
     }
 
+    askYN=saveY;
+    save_master_and_queue();
 
     return 1;
 }
 
-
 /*
 =========================================================
-DELETE TOPIC
+TOPIC: DELETE
 =========================================================
 */
 
 EMSCRIPTEN_KEEPALIVE
-int wasm_delete_topic(int index)
-{
-    Topic* node =
-        topic_at_index(index);
+int wasm_delete_topic(int index){
+    Topic* node=topic_at_index(index);
 
-    if (node == NULL)
+    if(node==NULL){
         return 0;
+    }
 
-
-    /*
-        The queue stores Topic* pointers.
-        Remove every queue reference before freeing
-        the Topic to avoid dangling pointers.
-    */
-    queue_remove_topic(node);
-
-
-    link_topic_after_removal_free(node);
-
-
-    save_data();
+    askYN=saveY;
+    delete_node(node);
 
     return 1;
 }
-
 
 /*
 =========================================================
@@ -582,35 +521,28 @@ QUEUE: AVAILABLE COUNT
 */
 
 EMSCRIPTEN_KEEPALIVE
-int wasm_available_count(
-    int status,
-    int priority
-)
-{
-    if (!valid_status(status) ||
-        !valid_priority(priority))
+int wasm_available_count(int status,int priority){
+    if(!valid_status(status) || !valid_priority(priority)){
         return 0;
+    }
 
-    int count = 0;
+    int count=0;
+    Topic* current=head;
 
-    Topic* current = head;
-
-    while (current != NULL)
-    {
-        if (
-            current->is_done == status &&
-            current->priority == priority
-        )
-        {
+    while(current!=NULL){
+        if(
+            current->is_done==status &&
+            current->priority==priority &&
+            !queue_contains_topic(current)
+        ){
             count++;
         }
 
-        current = current->next;
+        current=current->next;
     }
 
     return count;
 }
-
 
 /*
 =========================================================
@@ -619,70 +551,41 @@ QUEUE: ENQUEUE
 */
 
 EMSCRIPTEN_KEEPALIVE
-int wasm_enqueue(
-    int status,
-    int priority,
-    int count
-)
-{
-    if (!valid_status(status) ||
-        !valid_priority(priority))
+int wasm_enqueue(int status,int priority,int count){
+    if(
+        !valid_status(status) ||
+        !valid_priority(priority) ||
+        count<=0
+    ){
         return 0;
-
-    if (count <= 0)
-        return 0;
-
-
-    int added = 0;
-
-    Topic* current = head;
-
-
-    while (
-        current != NULL &&
-        added < count
-    )
-    {
-        if (
-            current->is_done == status &&
-            current->priority == priority
-        )
-        {
-            QueueNode* newNode =
-                (QueueNode*)malloc(
-                    sizeof(QueueNode)
-                );
-
-            if (newNode == NULL)
-                break;
-
-
-            newNode->topic = current;
-            newNode->next = NULL;
-
-
-            if (front == NULL)
-            {
-                front = newNode;
-                back = newNode;
-            }
-            else
-            {
-                back->next = newNode;
-                back = newNode;
-            }
-
-
-            added++;
-        }
-
-        current = current->next;
     }
 
+    int added=0;
+    Topic* current=head;
+
+    while(current!=NULL && added<count){
+        if(
+            current->is_done==status &&
+            current->priority==priority &&
+            !queue_contains_topic(current)
+        ){
+            if(enqueue(current)){
+                added++;
+            }
+        }
+
+        current=current->next;
+    }
+
+    if(added>0){
+        askYN=saveY;
+        currMode=save_queue;
+        save_data();
+        currMode=save_master;
+    }
 
     return added;
 }
-
 
 /*
 =========================================================
@@ -691,21 +594,17 @@ QUEUE COUNT
 */
 
 EMSCRIPTEN_KEEPALIVE
-int wasm_queue_count(void)
-{
-    int count = 0;
+int wasm_queue_count(void){
+    int count=0;
+    QueueNode* current=front;
 
-    QueueNode* current = front;
-
-    while (current != NULL)
-    {
+    while(current!=NULL){
         count++;
-        current = current->next;
+        current=current->next;
     }
 
     return count;
 }
-
 
 /*
 =========================================================
@@ -714,32 +613,29 @@ QUEUE -> JSON
 */
 
 EMSCRIPTEN_KEEPALIVE
-const char* wasm_get_queue_json(void)
-{
+const char* wasm_get_queue_json(void){
     json_reset();
-
     json_append_raw("[");
 
-    QueueNode* current = front;
+    QueueNode* current=front;
+    int first=1;
+    int queueIndex=0;
 
-    int first = 1;
-    int queueIndex = 0;
-
-    while (current != NULL)
-    {
-        if (!first)
+    while(current!=NULL){
+        if(!first){
             json_append_raw(",");
+        }
 
-        first = 0;
+        first=0;
 
-        Topic* topic =
-            current->topic;
+        Topic* topic=current->topic;
 
         json_append_raw("{");
 
         json_append_format(
-            "\"queueIndex\":%d",
-            queueIndex
+            "\"queueIndex\":%d,\"index\":%d",
+            queueIndex,
+            index_of_topic(topic)
         );
 
         json_append_raw(",\"subject\":");
@@ -748,30 +644,19 @@ const char* wasm_get_queue_json(void)
         json_append_raw(",\"chapter\":");
         json_append_string(topic->chapter);
 
-        json_append_format(
-            ",\"priority\":%d",
-            topic->priority
-        );
-
-        json_append_format(
-            ",\"status\":%d",
-            topic->is_done
-        );
+        json_append_format(",\"priority\":%d",topic->priority);
+        json_append_format(",\"status\":%d",topic->is_done);
 
         json_append_raw("}");
 
-        current = current->next;
+        current=current->next;
         queueIndex++;
     }
 
     json_append_raw("]");
 
-    if (json_buffer == NULL)
-        return "[]";
-
-    return json_buffer;
+    return json_buffer==NULL ? "[]" : json_buffer;
 }
-
 
 /*
 =========================================================
@@ -780,29 +665,58 @@ QUEUE: DEQUEUE
 */
 
 EMSCRIPTEN_KEEPALIVE
-int wasm_dequeue(void)
-{
-    if (front == NULL)
+int wasm_dequeue(void){
+    if(front==NULL){
         return 0;
+    }
 
+    QueueNode* old=front;
 
-    QueueNode* old =
-        front;
+    front=front->next;
 
-
-    front =
-        front->next;
-
-
-    if (front == NULL)
-        back = NULL;
-
+    if(front==NULL){
+        back=NULL;
+    }
 
     free(old);
+
+    askYN=saveY;
+    currMode=save_queue;
+    save_data();
+    currMode=save_master;
 
     return 1;
 }
 
+/*
+=========================================================
+QUEUE: STUDY NEXT
+=========================================================
+*/
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_study_next(int mark_done){
+    if(front==NULL){
+        return 0;
+    }
+
+    Topic* topic=front->topic;
+
+    if(!wasm_dequeue()){
+        return 0;
+    }
+
+    if(mark_done && topic->is_done==0){
+        topic->is_done=1;
+
+        askYN=saveY;
+        currMode=save_master;
+        save_data();
+        currMode=save_master;
+    }
+
+    return 1;
+}
 
 /*
 =========================================================
@@ -811,20 +725,11 @@ QUEUE: CLEAR
 */
 
 EMSCRIPTEN_KEEPALIVE
-void wasm_clear_queue(void)
-{
-    QueueNode* current = front;
+void wasm_clear_queue(void){
+    clear_queue();
 
-    while (current != NULL)
-    {
-        QueueNode* next =
-            current->next;
-
-        free(current);
-
-        current = next;
-    }
-
-    front = NULL;
-    back = NULL;
+    askYN=saveY;
+    currMode=save_queue;
+    save_data();
+    currMode=save_master;
 }

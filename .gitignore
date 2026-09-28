@@ -18,3 +18,4 @@ Thumbs.db
 .cache/
 .emscripten_cache/
 data/data.txt
+data/queue_data.txt

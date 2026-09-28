@@ -2,7 +2,7 @@
 
 void show_progress(){
     if(head==NULL){
-        printf("Data not available!");
+        printf("Data not available!\n");
         return;
     }
     int total=0, completed=0, pending=0;
@@ -28,7 +28,7 @@ void show_progress(){
 
 void show_progress_queue(){
     if(front==NULL){
-        printf("Data not available for today session!");
+        printf("Data not available for today session!\n");
         return;
     }
     QueueNode* temp=front;
@@ -37,6 +37,6 @@ void show_progress_queue(){
         temp=temp->next;
         total++;
     }
-    printf("Your total task is in queue: %d",total);
-    
+    printf("Your total task is in queue: %d\n",total);
+
 }

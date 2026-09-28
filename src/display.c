@@ -9,13 +9,13 @@ void print_topic(Topic* node)
         case 1:
             priority_text="High";
             break;
-        
+
         case 0:
             priority_text="Medium";
             break;
-        
+
         case -1:
-            priority_text="low";
+            priority_text="Low";
             break;
 
         default:

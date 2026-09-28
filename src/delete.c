@@ -1,182 +1,155 @@
 #include "topic.h"
 
-void pop(){
+static int confirm_delete(Topic* node){
+    if(node==NULL){
+        return 0;
+    }
+
+    print_topic(node);
+    printf("\nDo you want to delete the topic?\n1. Yes\n2. No\n");
+
+    while(1){
+        int ans=read_int();
+
+        if(ans==1){
+            return 1;
+        }
+
+        if(ans==2){
+            printf("Topic remains same.\n");
+            return 0;
+        }
+
+        printf("Invalid choice. Enter 1 or 2: ");
+    }
+}
+
+void pop(void){
     int choice;
-    printf("AT WHICH NODE , DO YOU WANT TO DELETE ?");
-    printf("1. FRONT?");
-    printf("2. BACK?");
-    printf("3. ANWHERE IN BETWEEN?");
-    while (1){
+
+    printf("\nAT WHICH NODE DO YOU WANT TO DELETE?\n");
+    printf("1. FRONT\n");
+    printf("2. BACK\n");
+    printf("3. ANYWHERE IN BETWEEN (search by subject + chapter)\n");
+
+    while(1){
         printf("Enter your choice: ");
-        scanf("%d",&choice);
-        switch (choice){
+        choice=read_int();
+
+        switch(choice){
             case 1:
                 popfront();
-                break;
-            case 2: 
+                return;
+
+            case 2:
                 popback();
-                break;
+                return;
+
             case 3:
-                // if(head==NULL){
-                //     printf("File is empty.\n");
-                //     return;
-                // }
-                // else if(head==tail){
-                //     printf("There is only one topic\n");
-                //     popfront();
-                //     return;
-                // }
-                // Topic* temp=head;
-                // int n=1, choice;
-                // while(temp!=NULL){
-                //     printf("%d. ",n),print_topic(temp);
-                //     temp=temp->next;
-                //     n++;
-                // }
-                // temp=head;
-                // printf("Enter you choice: ");
-                // scanf("%d",&choice);
-                // if(choice==1){
-                //     popfront();
-                //     return;
-                // }
-                // else if(choice==n-1){
-                //     popback();
-                //     return;
-                // }
-                // else if(choice<n-1 && choice>1){
-                //     n=1;
-                //     while(n<choice){
-                //     temp=temp->next;
-                //     n++;
-                // }
                 search_topic();
-                // popany(temp);
-                break;
+                return;
 
             default:
-                printf("Invalid choice. Enter 1 or 2 or 3: ");
-                continue;
-        }
-        if(choice==1 || choice==2 || choice==3 ){
-            break;
+                printf("Invalid choice. Enter 1, 2 or 3.\n");
         }
     }
 }
 
-void popfront(){
-    if(head==NULL){
-        printf("File is empty.");
+/*
+    Remove a Topic from both structures safely.
+
+    QueueNode stores Topic*, so the queue reference must be removed
+    BEFORE the Topic itself is freed.
+*/
+void delete_node(Topic* node){
+    if(node==NULL){
         return;
     }
-    print_topic(head);
-    printf("\n do you want to delete the topic?\n1.Yes\n2.No\n");
-    int ans;
 
-    while (1) {
-        scanf("%d", &ans);
-        switch (ans){
-            case 1:{
-                Topic* temp=head;
-                if(head==tail){
-                    free(temp);
-                    head=NULL;
-                    tail=NULL;
-                    save_data();
-                    return;
-                }
-                head=head->next;
-                head->prev=NULL;
-                free(temp);
-                printf("Deleted!\n");
-                save_data();
-                break;
-            }
-            
-            case 2:
-                printf("Topic remains same.\n");
-                break;
-            
-            default:
-                printf("Invalid choice. Enter 1 or 2: ");
-        }
-        if(ans==1 || ans==2){
-            break;
-        }
+    queue_remove_topic(node);
+    remove_node(node);
+    free(node);
+
+    printf("Deleted!\n");
+
+    if(askYN==saveY){
+        currMode=save_master;
+        save_data();
+
+        currMode=save_queue;
+        save_data();
+
+        currMode=save_master;
     }
 }
 
-void popback(){
+void popfront(void){
     if(head==NULL){
-        printf("File is empty.");
+        printf("List is empty.\n");
         return;
     }
-    print_topic(tail);
-    printf("\n do you want to delete the topic?\n1.Yes\n2.No\n");
-    int ans;
 
-    while (1) {
-        scanf("%d", &ans);
-        switch (ans){
-            case 1:{
-                
-                Topic* temp=tail;
-                if(head==tail){
-                    free(temp);
-                    head=NULL;
-                    tail=NULL;
-                    save_data();
-                    return;
-                }
-                tail=tail->prev;
-                tail->next=NULL;
-                free(temp);
-                printf("Deleted!\n");
-                save_data();
-                break;
-            }
-            
-            case 2:
-                printf("Topic remains same.\n");
-                break;
-            
-            default:
-                printf("Invalid choice. Enter 1 or 2: ");
-        }
-        if(ans==1 || ans==2){
-            break;
-        }
+    if(confirm_delete(head)){
+        delete_node(head);
+    }
+}
+
+void popback(void){
+    if(head==NULL){
+        printf("List is empty.\n");
+        return;
+    }
+
+    if(confirm_delete(tail)){
+        delete_node(tail);
     }
 }
 
 void popany(Topic* node){
-    if(node->prev==NULL){
-        popfront();
+    if(node==NULL){
         return;
     }
-    else if(node->next==NULL){
-        popback();
-        return;
+
+    if(confirm_delete(node)){
+        delete_node(node);
     }
-    Topic* save=node->next;
-    save->prev=node->prev;
-    node->prev->next=save;
-    free(node);
-    printf("Deleted!\n");
-    save_data();
 }
 
 void remove_node(Topic* node){
-    if(node->prev != NULL)
-        node->prev->next = node->next;
-    else
-        head = node->next;
+    if(node==NULL){
+        return;
+    }
 
-    if(node->next != NULL)
-        node->next->prev = node->prev;
-    else
-        tail = node->prev;
+    if(node->prev!=NULL){
+        node->prev->next=node->next;
+    }
+    else{
+        head=node->next;
+    }
 
-    node->next = NULL;
-    node->prev = NULL;
+    if(node->next!=NULL){
+        node->next->prev=node->prev;
+    }
+    else{
+        tail=node->prev;
+    }
+
+    node->next=NULL;
+    node->prev=NULL;
+}
+
+/* Used by the browser import/reload path. */
+void free_all_topics(void){
+    clear_queue();
+
+    Topic* temp=head;
+
+    while(temp!=NULL){
+        Topic* next=temp->next;
+        free(temp);
+        temp=next;
+    }
+
+    head=NULL;
+    tail=NULL;
 }
