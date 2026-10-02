@@ -1,21 +1,22 @@
+# build/*
+# !build/.gitkeep
+# *.exe
+# data/data.txt
+# Build output
+build/*
+!build/.gitkeep
 *.exe
 *.o
-*.obj
-*.out
-*.a
-*.lib
-*.log
-*.tmp
-*.temp
-*.bak
-*.swp
+
+# Personal study data (console app writes these)
+data/*
+!data/.gitkeep
+
+# Exported backups from the web app
+study-backup-*.json
+
+# Editor and OS files
 .vscode/
-__pycache__/
-*.pyc
-*.pyo
-Thumbs.db
 .DS_Store
-.cache/
-.emscripten_cache/
-data/data.txt
-data/queue_data.txt
+Thumbs.db
+desktop.ini

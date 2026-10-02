@@ -1,553 +1,210 @@
-# StudyFlow — Study Management System
+# Study Management System
 
-A C-based study manager with a browser frontend powered by WebAssembly.
+A console-based study topic manager written in C, built around a **doubly linked list** with **priority-based sorted insertion**, search, filters, a separate study-session priority queue, and file persistence. Created as a learning project to practice core data structure operations beyond textbook basics.
 
-The project keeps the real data structures and application rules in C:
+## Features
 
-- Doubly linked list for the master topic list
-- Priority-sorted insertion
-- Search and case-insensitive matching
-- Filters
-- Topic update and deletion
-- Singly linked study queue
-- Queue persistence
-- Progress statistics
-- File handling
+**Master Topic List (Doubly Linked List)**
+- Add topics — front, back, or automatically by priority
+- Priority-sorted insertion — new topics are placed in the correct position automatically
+- Search topics — case-insensitive lookup by subject and chapter (supports multi-word input)
+- Update topics — change priority (auto re-sorts the list) or completion status
+- Delete topics — front, back, anywhere in the middle, or directly from a search result
+- Filter topics — pending only, completed only, or by specific priority
+- Progress summary — total, completed, pending counts and completion percentage
 
-The browser UI is a JavaScript/HTML/CSS layer over the C core.
+**Today's Study Queue (separate Priority Queue, independent of the master list)**
+- Enqueue — filter the master list by status + priority, then pull N matching topics into today's queue (nodes reference the original master-list topics, not copies)
+- Dequeue — pop the next topic to study from the front of the queue
+- Display — view everything currently queued for today
+- Task count — see how many topics remain in today's queue
 
----
+**Study Plan**
+- Create a plan: pick pending topics, give a name, start date and end date (YYYYMMDD, validated)
+- Base pace = topics per day needed when the plan starts
+- Check plan: details, days left, today's target, progress %, and status (Behind / On track / Ahead)
+- Update plan: add or remove topics, fill today's queue from the plan
+- Extend an ended plan or delete it
+- Fill today's queue from the plan: adds exactly today's target, high priority first, no duplicates
 
-## Project structure
+**Daily Report**
+- Topics completed today (each topic stores the date it was completed)
+- How many of them belong to the plan, today's target and whether it was reached
 
-```text
-StudyManagementSystem-WASM/
-│
+**Persistence**
+- `data/data.txt`, `data/queue_data.txt` and `data/plan_data.txt` are saved after every change and loaded on startup.
+
+**Safe input**
+- Typing letters where a number is expected, empty names, or commas in names just asks again instead of breaking the program.
+
+## Architecture
+
+```
+Std. management/
 ├── include/
-│   ├── topic.h
-│   └── wasm_bridge.h
-│
+│   └── topic.h              # structs, enums, extern globals, all prototypes
 ├── src/
-│   ├── globals.c
-│   ├── input.c
-│   ├── insert.c
-│   ├── delete.c
-│   ├── display.c
-│   ├── filters.c
-│   ├── file_handling.c
-│   ├── progress_stat.c
-│   ├── search.c
-│   ├── temp_session.c
-│   ├── update.c
-│   └── wasm_bridge.c
-│
-├── data/
-│   ├── data.txt
-│   └── queue_data.txt
-│
-├── web/
-│   ├── index.html
-│   ├── style.css
-│   ├── app.js
-│   ├── wasm.js
-│   └── wasm.wasm
-│
-├── main.c
-├── build_native.bat
-├── build_wasm.bat
-└── README.md
+│   ├── main.c               # interactive menu, program entry point
+│   ├── globals.c            # definitions of head, tail, front, back, plan, modes
+│   ├── core/                # master list (doubly linked list)
+│   │   ├── insert.c         # insert_init, insert_prior, insert_node_by_priority, ...
+│   │   ├── delete.c         # pop, popfront, popback, popany
+│   │   ├── update.c         # update_priority (with re-sort), update_status
+│   │   ├── search.c         # case-insensitive search, searched_action
+│   │   ├── filters.c        # pending/completed/priority filters
+│   │   ├── display.c        # print_topic (box), print_topic_row (table), print_all
+│   │   ├── input.c          # safe input: read_int, read_choice, read_yn, read_text, read_date
+│   │   └── progress_stat.c  # progress for master list, queue, plan + daily report
+│   ├── queue/
+│   │   └── temp_session.c   # today's study queue: enqueue, dequeue, display
+│   ├── plan/                # study plan feature
+│   │   ├── study_plan.c     # create / check / status / update / delete plan
+│   │   ├── operations_plan.c# adding topics to the plan
+│   │   └── date_utils.c     # today_ymd, valid_date, day_number, display_date
+│   └── storage/
+│       └── file_handling.c  # save_data, load_data
+├── data/                    # data.txt, queue_data.txt, plan_data.txt
+├── build/                   # compiled program (not committed)
+└── build.bat                # Windows build script
 ```
 
-`main.c` is only for the native console build. It is not included in the browser/WASM build.
-
----
-
-## Core data structures
-
-### Topic
+## Data structures
 
 ```c
-typedef struct Topic{
+typedef struct Topic {
     char subject[50];
     char chapter[50];
-    int priority;
-    int is_done;
-    struct Topic* next;
-    struct Topic* prev;
+    int priority;           // 1 = High, 0 = Medium, -1 = Low
+    int is_done;             // 0 = Pending, 1 = Completed
+    struct Topic *next;
+    struct Topic *prev;
 } Topic;
-```
 
-Priority:
-
-```text
- 1  = High
- 0  = Medium
--1  = Low
-```
-
-Status:
-
-```text
-0 = Pending
-1 = Completed
-```
-
-### QueueNode
-
-```c
-typedef struct QueueNode{
-    Topic* topic;
-    struct QueueNode* next;
+typedef struct QueueNode {
+    Topic* topic;             // pointer into the master list — no data duplication
+    struct QueueNode *next;
 } QueueNode;
 ```
 
-The queue stores `Topic*` references instead of copying the full topic.
+The master list is a **doubly linked list** so deletion and reinsertion (for priority updates) can be done in O(1) once the position is found. The study queue is a simpler **singly linked list** with front/back pointers, since it only needs enqueue/dequeue, not arbitrary deletion.
 
----
+## Key design decisions
 
-# New persistence design
+**Priority-sorted insertion** — `insert_prior()` walks the master list and inserts new topics in the correct position automatically.
 
-The project now has two save modes.
+**Reposition without reallocating** — `update_priority()` detaches the existing node with `remove_node()` (not freed) and reinserts it via `insert_node_by_priority()`, avoiding a memory leak and an unnecessary allocation.
 
-```c
-enum SaveMode {save_master, save_queue};
-extern enum SaveMode currMode;
+**Study queue references, not copies** — `QueueNode` stores a `Topic*` pointing back into the master list, so the queue always reflects the latest data without duplicating it.
+
+**Filtered enqueue** — `enqueue_ask()` uses a query-like `filter()` helper (status + priority) to pull a chosen number of matching topics into today's queue, similar to a database `WHERE` clause.
+
+**Multi-word input handling** — subject and chapter fields accept spaces using `scanf(" %49[^\n]", ...)` instead of `%s`.
+
+## Build & Run
+
+Always run from the project root folder (the data files are read from `data/`).
+
+```bash
+# Windows
+build.bat
+.\build\study_manager.exe
+
+# Linux/macOS
+gcc -Iinclude src/*.c src/*/*.c -o build/study_manager
+./build/study_manager
 ```
 
-`currMode` tells `save_data()` WHAT to save:
+## Web version (WebAssembly)
 
-```text
-save_master -> data.txt
-save_queue  -> queue_data.txt
+The same C code runs in the browser. `wasm/wasm_api.c` is a small bridge that the web page calls; `src/main.c` is not used there. Data is saved in the browser (IndexedDB), so it stays after closing the tab.
+
+```bash
+# 1. Build (needs emsdk; web/study.js and web/study.wasm are already built in the repo)
+build_wasm.bat          # Windows
+./build_wasm.sh         # Linux/macOS
+
+# 2. Run (a local server is needed, opening index.html directly will not load the .wasm)
+cd web
+python -m http.server 8000
+# open http://localhost:8000
 ```
 
-There is a separate enum for WHETHER an operation should save:
+Deploy: on Cloudflare Pages / Netlify / GitHub Pages, set the output folder to `web` with no build command.
 
-```c
-enum when2save {saveY, saveN};
-extern enum when2save askYN;
+Backup: the sidebar has **Export**, which downloads `study-backup-YYYYMMDD.json` with all topics (status, completed date, plan and queue flags) and the plan, but no IDs. **Import** adds the topics from that file to the current list. Each one gets a new ID from the app, topics that already exist (same subject and chapter) are skipped, and the plan is added only if there is no plan yet.
+
+Import also takes a plain `.txt` / `.csv` topic list with **no IDs**, one topic per line:
+
+```
+subject,chapter,priority
+subject,chapter,priority,is_done,completed_on
 ```
 
-```text
-saveY -> save normally
-saveN -> temporarily disable saving while loading data
+Example: `DSA,Trees,1` or `Maths,Matrices,0,1,20261002` (priority 1 High, 0 Medium, -1 Low). The app gives every topic its ID.
+
+Files per topic: every topic row has a 📎 button (and **Add notes or files** in the ⋯ menu) to attach PDFs, images or any file up to 50 MB. Files are stored in the browser (IndexedDB), open in a new tab, open from the **Study next** card on Today, are deleted with their topic, and are included in Export / Import.
+
+Every console menu option works in the web version:
+
+| Console menu | Where in the web app |
+|---|---|
+| 1. Add topic (front / back / by priority) | **Add topic** button, “Where in the list” |
+| 2. Search / update / delete | Search box on Topics, then ⋯ for details, priority, status, delete |
+| 3. Delete front / back / anywhere | Topics → **List tools** → Delete first / last, or ⋯ → Delete |
+| 4. Display all topics | **Topics** in list order with No. (or grouped by subject) |
+| 5. Filter topics | Pending / Done tabs, priority and subject pickers |
+| 6. Add topics to today's queue | **List tools → Add several to today's queue** (pending or revision, priority, how many) or “+ Today” on a row |
+| 7. Show today's queue | **Today**: Study next + Up next |
+| 8. Study next topic | Today: **Mark as done** / **Not today** |
+| 9. Progress (master list) | **Progress**: all topics, by priority, by subject |
+| 10. Progress (queue) | Progress: today's queue |
+| 11–15. Plan create / check / update / delete / fill | **Plan** page |
+| 16. Today's report | Progress: daily report |
+| 17. Save & exit | Saves on every change |
+
+## Menu
+
+```
+ Master Topic List          Study Plan
+   1. Add Topic               11. Create Plan
+   2. Search/Update/Delete    12. Check Plan
+   3. Delete Topic            13. Update Plan
+   4. Display All Topics      14. Delete Plan
+   5. Filter Topics           15. Fill Today's Queue from Plan
+ Today's Study Queue          16. Today's Report
+   6. Add Topics to Queue   Program
+   7. Show Today's Queue      17. Save & Exit
+   8. Study Next Topic
+ Progress
+   9. Progress (Master)
+  10. Progress (Queue)
 ```
 
-This keeps the two responsibilities separate.
-
----
-
-# File format
-
-### Master list
-
-`data.txt`
-
-```text
-subject,chapter,priority,status
-Maths,Fourier series,1,0
-Network analysis,graphs,0,0
-English,grammar,-1,0
-```
-
-### Queue
-
-`queue_data.txt`
-
-The queue file stores:
-
-```text
-subject,chapter,priority,status
-```
-
-When the queue is loaded, the current `Topic*` is recovered from the master list using:
-
-```text
-subject + chapter
-```
-
-This means the queue uses the latest priority/status from the master topic after restart.
-
----
-
-# Browser persistence
-
-The browser mounts:
-
-```text
-/data
-```
-
-using Emscripten IDBFS.
-
-Both files live in that directory:
-
-```text
-/data/data.txt
-/data/queue_data.txt
-```
-
-The browser therefore persists:
-
-```text
-Master topics  -> data.txt
-Study queue    -> queue_data.txt
-```
-
-The JavaScript layer calls `FS.syncfs()` so the Emscripten filesystem is synchronized with IndexedDB.
-
-Refreshing the page does not remove stored data.
-
-Clearing browser site data / IndexedDB removes it.
-
----
-
-# Important C flow
-
-## Insert
-
-```text
-insert_prior()
-      |
-      v
-insert_node_by_priority()
-      |
-      +--> insertfront()
-      +--> insertback()
-      +--> insert_any()
-      |
-      v
-save master
-```
-
-The save is intentionally centralized in `insert_prior()` instead of repeating the same save block in three insert functions.
-
-While loading:
-
-```c
-askYN = saveN;
-```
-
-so `insert_prior()` does not overwrite the file that is currently being read.
-
----
-
-## Update
-
-Changing priority:
-
-```text
-remove_node()
-      |
-      v
-change priority
-      |
-      v
-insert_node_by_priority()
-      |
-      v
-save master + queue
-```
-
-Updating subject/chapter/status also saves both files.
-
-The queue file is rewritten after an update so a queued topic remains loadable even when its subject/chapter changes.
-
----
-
-## Delete
-
-Deleting a topic first removes any queue node that points to it.
-
-```text
-queue_remove_topic()
-        |
-        v
-remove_node()
-        |
-        v
-free(topic)
-        |
-        v
-save master + queue
-```
-
-This prevents dangling `Topic*` pointers inside the queue.
-
----
-
-## Queue
-
-Adding to queue:
-
-```text
-wasm_enqueue()
-      |
-      v
-enqueue()
-      |
-      v
-save queue
-```
-
-Removing from queue:
-
-```text
-wasm_dequeue()
-      |
-      v
-save queue
-```
-
-Clear queue:
-
-```text
-clear_queue()
-      |
-      v
-save queue
-```
-
-Study Next:
-
-```text
-remove queue front
-      |
-      v
-save queue
-      |
-      +--> mark completed
-              |
-              v
-          save master
-```
-
----
-
-# Browser frontend
-
-The frontend is designed as a study dashboard.
-
-### Dashboard
-
-- Total topics
-- Pending topics
-- Completed topics
-- Today's queue count
-- Up Next card
-- Quick actions
-- WebAssembly status
-
-### Master Topics
-
-- Search
-- Status filter
-- Priority filter
-- Add topic
-- Edit topic
-- Delete topic
-- Mark completed directly
-- Priority/status badges
-
-### Today's Queue
-
-- Select status
-- Select priority
-- Choose number of tasks
-- Show available matching topics
-- Add to queue
-- Study Next
-- Skip
-- Clear Queue
-- Queue is persistent
-
-### Progress
-
-- Overall completion
-- Completed / pending / total
-- Queue count
-- Progress by priority
-
-### UI
-
-- Responsive layout
-- Mobile-friendly topic cards
-- Light/dark mode
-- Keyboard shortcut:
-
-```text
-Ctrl + K
-```
-
-focuses topic search.
-
----
-
-# Build native console version
-
-From the project root:
-
-```powershell
-.\build_native.bat
-```
-
-Run:
-
-```powershell
-.\study_manager.exe
-```
-
-The native build loads both:
-
-```text
-data/data.txt
-data/queue_data.txt
-```
-
----
-
-# Build WebAssembly
-
-Emscripten is required.
-
-From PowerShell:
-
-```powershell
-.\build_wasm.bat
-```
-
-The script generates:
-
-```text
-web/wasm.js
-web/wasm.wasm
-```
-
-The build script includes:
-
-```text
--lidbfs.js
-```
-
-because IDBFS is required for browser persistence.
-
----
-
-# Run the web version
-
-From the project root:
-
-```powershell
-python -m http.server 8000 -d web
-```
-
-Open:
-
-```text
-http://localhost:8000
-```
-
-After C/WASM changes:
-
-```powershell
-.\build_wasm.bat
-```
-
-Then hard refresh the browser:
-
-```text
-Ctrl + Shift + R
-```
-
----
-
-# Native vs Browser
-
-| Part | Native | Browser |
-|---|---|---|
-| Master storage | `data/data.txt` | IDBFS `/data/data.txt` |
-| Queue storage | `data/queue_data.txt` | IDBFS `/data/queue_data.txt` |
-| Interface | `main.c` | HTML/CSS/JS |
-| C core | Yes | Yes |
-| Queue persistence | Yes | Yes |
-| File handling | stdio | Emscripten FS |
-| UI | Console | Web dashboard |
-
----
-
-# Recommended verification checklist
-
-## Master list
-
-- Add High / Medium / Low topics
-- Confirm priority ordering
-- Search subject
-- Search chapter
-- Update priority
-- Confirm re-sorting
-- Update status
-- Delete first topic
-- Delete middle topic
-- Delete last topic
-
-## Queue
-
-- Add pending topic
-- Add completed topic
-- Try duplicate queue insertion
-- Dequeue the first topic
-- Clear queue
-- Refresh browser
-- Confirm queue is still present
-- Delete a queued master topic
-- Confirm it disappears from queue
-
-## Persistence
-
-1. Add topics.
-2. Add topics to today's queue.
-3. Refresh the browser.
-4. Confirm both master list and queue return.
-5. Change a queued topic's subject/chapter.
-6. Refresh again.
-7. Confirm the queue still points to the updated topic.
-8. Delete a queued topic.
-9. Refresh again.
-10. Confirm there is no dangling queue entry.
-
----
-
-# Important note after source changes
-
-The checked-in `web/wasm.js` and `web/wasm.wasm` are generated artifacts.
-
-After modifying C files, rebuild them with:
-
-```powershell
-.\build_wasm.bat
-```
-
-Do not edit generated `wasm.js` or `wasm.wasm` manually.
-
----
-
-## Learning objectives
-
-This project demonstrates:
-
-- Structures
-- Pointers
-- Dynamic memory allocation
-- Doubly linked lists
-- Singly linked queues
-- Priority-based insertion
-- Search
-- Filtering
-- Update
-- Deletion
-- File persistence
-- Modular C
-- JavaScript ↔ C communication
-- WebAssembly
-- IDBFS / IndexedDB
-- Browser application architecture
+## Data files
+
+| File | Format |
+|---|---|
+| `data/data.txt` | `topic_id,subject,chapter,priority,is_done,in_plan,completed_on` |
+| `data/queue_data.txt` | one `topic_id` per line |
+| `data/plan_data.txt` | `start_date,end_date,start_totals,base_pace,plan_name` |
+
+## Roadmap
+
+- [x] Search, update (with auto re-sort), filters
+- [x] Interactive master menu
+- [x] File-based persistence
+- [x] Separate study-session priority queue (enqueue/dequeue/display)
+- [x] Progress statistics (master list and queue)
+- [x] Study plan with targets, progress and queue filling
+- [x] Daily report
+- [ ] Subtopic support via a `child` pointer
+- [x] Topic IDs (queue saved by ID)
+- [x] WebAssembly build with a browser frontend (`web/`)
+- [x] Attachments per topic (web)
+
+## Tech
+
+- Language: C
+- No external libraries — only `stdio.h`, `stdlib.h`, `string.h`
+- Compiled and tested with `gcc` (console) and Emscripten (web)
+- Web frontend: plain HTML, CSS and JavaScript

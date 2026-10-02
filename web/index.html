@@ -1,447 +1,55 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="color-scheme" content="light dark">
-    <title>StudyFlow — Study Management System</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%233b82f6'/%3E%3Cpath d='M17 17h30v8H17zM17 29h30v8H17zM17 41h20v8H17z' fill='white'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#F7F2E9">
+<title>Study Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 </head>
-
-<body class="is-loading">
-<div class="app-shell">
-
-    <header class="topbar">
-        <div class="brand">
-            <div class="brand-mark" aria-hidden="true">S</div>
-            <div>
-                <div class="eyebrow">StudyFlow</div>
-                <h1>Study Management System</h1>
-                <p>Focus. Learn. Complete.</p>
-            </div>
-        </div>
-
-        <div class="topbar-actions">
-            <span class="save-state" id="saveState" data-state="loading" role="status" aria-live="polite">
-                Loading…
-            </span>
-
-            <button class="icon-btn" id="themeToggle" type="button" aria-label="Toggle theme" title="Toggle light/dark mode">
-                ◐
-            </button>
-
-            <button class="secondary-btn" id="exportBtn" type="button" data-needs-wasm>
-                Export
-            </button>
-
-            <button class="secondary-btn" id="importBtn" type="button" data-needs-wasm>
-                Import
-            </button>
-
-            <input type="file" id="importFile" accept=".txt,text/plain" hidden>
-
-            <button class="primary-btn" id="saveBtn" type="button" data-needs-wasm>
-                Save
-            </button>
-        </div>
-    </header>
-
-    <main>
-
-        <section class="stats-grid" aria-label="Study summary">
-            <div class="stat-card">
-                <div class="stat-icon stat-blue">◎</div>
-                <div>
-                    <span class="stat-title">Total Topics</span>
-                    <span class="stat-value" id="totalTopics">0</span>
-                </div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-icon stat-amber">◷</div>
-                <div>
-                    <span class="stat-title">Pending</span>
-                    <span class="stat-value" id="pendingTopics">0</span>
-                </div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-icon stat-green">✓</div>
-                <div>
-                    <span class="stat-title">Completed</span>
-                    <span class="stat-value" id="completedTopics">0</span>
-                </div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-icon stat-violet">→</div>
-                <div>
-                    <span class="stat-title">Today's Queue</span>
-                    <span class="stat-value" id="queueCount">0</span>
-                </div>
-            </div>
-        </section>
-
-        <section class="main-grid">
-
-            <nav class="sidebar" aria-label="Sections">
-                <div class="side-title">Workspace</div>
-
-                <button class="menu-btn active" data-section="dashboard" type="button" aria-current="page">
-                    <span>Dashboard</span>
-                </button>
-
-                <button class="menu-btn" data-section="topics" type="button">
-                    <span>Master Topics</span>
-                </button>
-
-                <button class="menu-btn" data-section="queue" type="button">
-                    <span>Today's Queue</span>
-                    <span class="menu-count" id="menuQueueCount" hidden>0</span>
-                </button>
-
-                <button class="menu-btn" data-section="progress" type="button">
-                    <span>Progress</span>
-                </button>
-
-                <div class="sidebar-note">
-                    <span class="mini-dot"></span>
-                    <div>
-                        <strong>Runs in WebAssembly</strong>
-                        <span>Data stays in your browser.</span>
-                    </div>
-                </div>
-            </nav>
-
-            <section class="content">
-
-                <!-- DASHBOARD -->
-                <div class="page-section active" id="dashboard-section">
-
-                    <section class="hero-panel">
-                        <div class="hero-copy">
-                            <span class="hero-kicker">YOUR STUDY COMMAND CENTER</span>
-                            <h2>Make progress one topic at a time.</h2>
-                            <p>
-                                Keep your syllabus organized, build today's study queue,
-                                and see exactly how far you've come.
-                            </p>
-
-                            <div class="hero-actions">
-                                <button class="primary-btn hero-btn" data-action="add" type="button" data-needs-wasm>
-                                    + Add Topic
-                                </button>
-                                <button class="secondary-btn hero-btn" data-go="queue" type="button">
-                                    Plan Today's Queue
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="hero-visual" aria-hidden="true">
-                            <div class="hero-orbit orbit-one"></div>
-                            <div class="hero-orbit orbit-two"></div>
-                            <div class="hero-core">S</div>
-                        </div>
-                    </section>
-
-                    <div class="section-header compact-header">
-                        <div>
-                            <span class="section-kicker">STAY ON TRACK</span>
-                            <h2>Today's focus</h2>
-                            <p>Your next queued topic appears here.</p>
-                        </div>
-                    </div>
-
-                    <div class="up-next" id="upNextCard">
-                        <div class="empty-state">Loading…</div>
-                    </div>
-
-                    <div class="action-grid">
-                        <button class="action-card" data-action="add" type="button" data-needs-wasm>
-                            <span class="action-icon blue">+</span>
-                            <span>
-                                <span class="action-title">Add Topic</span>
-                                <span class="action-sub">Add a new subject or chapter</span>
-                            </span>
-                        </button>
-
-                        <button class="action-card" data-go="topics" data-focus="topicSearch" type="button">
-                            <span class="action-icon violet">⌕</span>
-                            <span>
-                                <span class="action-title">Find a Topic</span>
-                                <span class="action-sub">Search your complete syllabus</span>
-                            </span>
-                        </button>
-
-                        <button class="action-card" data-go="queue" type="button">
-                            <span class="action-icon amber">→</span>
-                            <span>
-                                <span class="action-title">Build Queue</span>
-                                <span class="action-sub">Pick what you want to study next</span>
-                            </span>
-                        </button>
-
-                        <button class="action-card" data-go="progress" type="button">
-                            <span class="action-icon green">↗</span>
-                            <span>
-                                <span class="action-title">View Progress</span>
-                                <span class="action-sub">Track completion by priority</span>
-                            </span>
-                        </button>
-                    </div>
-
-                    <div class="system-card">
-                        <div class="system-copy">
-                            <div class="system-status-icon">W</div>
-                            <div>
-                                <h3>WebAssembly engine</h3>
-                                <p id="wasmMessage">Waiting for WebAssembly…</p>
-                            </div>
-                        </div>
-                        <button class="secondary-btn small-btn" id="wasmTestBtn" type="button" data-needs-wasm>
-                            Test WASM
-                        </button>
-                    </div>
-                </div>
-
-                <!-- TOPICS -->
-                <div class="page-section" id="topics-section">
-
-                    <div class="section-header">
-                        <div>
-                            <span class="section-kicker">MASTER LIST</span>
-                            <h2>All study topics</h2>
-                            <p>Priority-sorted by the C doubly linked list.</p>
-                        </div>
-
-                        <button class="primary-btn" data-action="add" type="button" data-needs-wasm>
-                            + Add Topic
-                        </button>
-                    </div>
-
-                    <div class="toolbar">
-                        <div class="search-wrap">
-                            <span class="search-symbol">⌕</span>
-                            <input type="search" id="topicSearch" class="search-input"
-                                   placeholder="Search subject or chapter…" aria-label="Search topics">
-                            <kbd>Ctrl K</kbd>
-                        </div>
-
-                        <select id="statusFilter" class="filter-select" aria-label="Filter by status">
-                            <option value="all">All Status</option>
-                            <option value="0">Pending</option>
-                            <option value="1">Completed</option>
-                        </select>
-
-                        <select id="priorityFilter" class="filter-select" aria-label="Filter by priority">
-                            <option value="all">All Priority</option>
-                            <option value="1">High</option>
-                            <option value="0">Medium</option>
-                            <option value="-1">Low</option>
-                        </select>
-                    </div>
-
-                    <p class="result-count" id="resultCount"></p>
-
-                    <div class="topics-table-wrapper">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th class="col-done">Done</th>
-                                    <th>Subject</th>
-                                    <th>Chapter</th>
-                                    <th>Priority</th>
-                                    <th>Status</th>
-                                    <th class="col-actions">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="topicsTableBody">
-                                <tr>
-                                    <td colspan="6" class="empty-state">No topics yet.</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- QUEUE -->
-                <div class="page-section" id="queue-section">
-
-                    <div class="section-header">
-                        <div>
-                            <span class="section-kicker">STUDY SESSION</span>
-                            <h2>Today's queue</h2>
-                            <p>Build a focused sequence from your master topics.</p>
-                        </div>
-                    </div>
-
-                    <form class="queue-builder" id="queueForm" novalidate>
-                        <div class="field">
-                            <label for="queueStatus">Status</label>
-                            <select id="queueStatus">
-                                <option value="0">Pending</option>
-                                <option value="1">Completed</option>
-                            </select>
-                        </div>
-
-                        <div class="field">
-                            <label for="queuePriority">Priority</label>
-                            <select id="queuePriority">
-                                <option value="1">High</option>
-                                <option value="0">Medium</option>
-                                <option value="-1">Low</option>
-                            </select>
-                        </div>
-
-                        <div class="field">
-                            <label for="queueNumber">Tasks to add</label>
-                            <input id="queueNumber" type="number" min="1" value="1" step="1">
-                        </div>
-
-                        <div class="queue-available">
-                            <span>Available</span>
-                            <strong id="queueAvailable">0</strong>
-                        </div>
-
-                        <button class="primary-btn" id="addToQueueBtn" type="submit" data-needs-wasm>
-                            Add to Queue
-                        </button>
-                    </form>
-
-                    <div class="queue-actions">
-                        <span class="muted">Your queue is saved with your browser data.</span>
-                        <button class="danger-btn small-btn" id="clearQueueBtn" type="button" data-needs-wasm>
-                            Clear Queue
-                        </button>
-                    </div>
-
-                    <div class="queue-list" id="queueList">
-                        <div class="empty-state">No topics in today's queue.</div>
-                    </div>
-                </div>
-
-                <!-- PROGRESS -->
-                <div class="page-section" id="progress-section">
-
-                    <div class="section-header">
-                        <div>
-                            <span class="section-kicker">ANALYTICS</span>
-                            <h2>Your progress</h2>
-                            <p>A quick view of completion across your syllabus.</p>
-                        </div>
-                    </div>
-
-                    <div class="progress-card progress-hero">
-                        <div class="progress-row">
-                            <div>
-                                <span class="section-kicker">OVERALL COMPLETION</span>
-                                <h3>Keep the streak going</h3>
-                            </div>
-                            <strong id="progressPercent">0%</strong>
-                        </div>
-
-                        <div class="progress-bar" id="progressBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                            <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
-                        </div>
-
-                        <div class="progress-summary">
-                            <span><strong id="progressCompleted">0</strong> completed</span>
-                            <span><strong id="progressPending">0</strong> pending</span>
-                            <span><strong id="progressTotal">0</strong> total</span>
-                            <span><strong id="queueProgressCount">0</strong> in queue</span>
-                        </div>
-                    </div>
-
-                    <div class="progress-card">
-                        <div class="progress-row">
-                            <h3 class="card-title">Progress by priority</h3>
-                            <span class="muted">High → Medium → Low</span>
-                        </div>
-                        <div id="priorityProgress"></div>
-                    </div>
-                </div>
-
-            </section>
-        </section>
-    </main>
-
-    <!-- TOPIC DIALOG -->
-    <dialog class="modal-box" id="topicDialog">
-        <form id="topicForm" method="dialog" novalidate>
-            <div class="modal-header">
-                <div>
-                    <span class="section-kicker">TOPIC</span>
-                    <h2 id="topicDialogTitle">Add Topic</h2>
-                </div>
-                <button class="icon-btn" type="button" data-close aria-label="Close">×</button>
-            </div>
-
-            <input type="hidden" id="editIndex" value="-1">
-
-            <p class="form-hint">Subject and chapter must be unique together.</p>
-            <p class="form-error" id="topicFormError" hidden></p>
-
-            <div class="form-row">
-                <label>
-                    Subject
-                    <input type="text" id="subjectInput" maxlength="49" placeholder="e.g. Signals & Systems" required>
-                </label>
-
-                <label>
-                    Chapter
-                    <input type="text" id="chapterInput" maxlength="49" placeholder="e.g. Fourier Series" required>
-                </label>
-            </div>
-
-            <div class="form-row">
-                <label>
-                    Priority
-                    <select id="priorityInput">
-                        <option value="1">High</option>
-                        <option value="0">Medium</option>
-                        <option value="-1">Low</option>
-                    </select>
-                </label>
-
-                <label>
-                    Status
-                    <select id="statusInput">
-                        <option value="0">Pending</option>
-                        <option value="1">Completed</option>
-                    </select>
-                </label>
-            </div>
-
-            <div class="modal-actions">
-                <button class="secondary-btn" type="button" data-close>Cancel</button>
-                <button class="primary-btn" id="topicSubmitBtn" type="submit">Add Topic</button>
-            </div>
-        </form>
-    </dialog>
-
-    <!-- CONFIRM DIALOG -->
-    <dialog class="modal-box confirm-box" id="confirmDialog">
-        <div class="modal-header">
-            <div>
-                <span class="section-kicker">CONFIRM</span>
-                <h2 id="confirmTitle">Are you sure?</h2>
-            </div>
-        </div>
-
-        <p id="confirmMessage"></p>
-
-        <div class="modal-actions">
-            <button class="secondary-btn" id="confirmCancel" type="button">Cancel</button>
-            <button class="danger-btn" id="confirmAlt" type="button" hidden>Replace</button>
-            <button class="danger-btn" id="confirmOk" type="button">Delete</button>
-        </div>
-    </dialog>
-
-    <div class="toast-area" id="toastArea" aria-live="polite" aria-atomic="true"></div>
+<body>
+<div id="loading" class="loading"><span class="brand">study<span>/</span>manager</span><span class="muted">Opening your topics…</span></div>
+
+<div class="app" id="app" hidden>
+  <aside class="side">
+    <p class="brand">study<span>/</span>manager</p>
+    <nav class="nav" aria-label="Main">
+      <button data-view="today" aria-current="page">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><span>Today</span></button>
+      <button data-view="topics">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12"/><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" stroke-linejoin="round"/></svg><span>Topics</span></button>
+      <button data-view="plan">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Plan</span></button>
+      <button data-view="progress">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 20V12M12 20V5M19 20v-9"/></svg><span>Progress</span></button>
+    </nav>
+    <div class="backup">
+      <p class="backup-title">Backup</p>
+      <p class="backup-text">Every change saves on its own in this browser. Export a copy to keep it safe or move it to another device.</p>
+      <div class="backup-btns">
+        <button class="btn btn-quiet btn-sm" id="btn-export">Export</button>
+        <button class="btn btn-quiet btn-sm" id="btn-import">Import</button>
+      </div>
+      <input type="file" id="import-file" accept=".json,.txt,.csv" hidden>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="view" id="view-today" aria-label="Today"></section>
+    <section class="view" id="view-topics" aria-label="Topics" hidden></section>
+    <section class="view" id="view-plan" aria-label="Plan" hidden></section>
+    <section class="view" id="view-progress" aria-label="Progress" hidden></section>
+  </main>
 </div>
 
+<dialog id="dlg"><div class="dlg" id="dlg-body"></div></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toast-text"></span><button id="toast-undo" hidden>Undo</button></div>
+
 <script src="app.js"></script>
-<script src="wasm.js"></script>
+<script src="files.js"></script>
+<script src="study.js"></script>
 </body>
 </html>
