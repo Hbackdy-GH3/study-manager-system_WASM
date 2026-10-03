@@ -17,9 +17,17 @@ var Module = {
     try { fs.mkdir('/data'); } catch (e) {}
     fs.mount(fs.filesystems.IDBFS || window.IDBFS, {}, '/data');
     fs.syncfs(true, function () {
-      Module.ccall('wasm_init', 'number', [], []);
-      persist();
-      boot();
+      var start = function () {
+        Module.ccall('wasm_init', 'number', [], []);
+        persist();
+        boot();
+        if (typeof Cloud !== 'undefined') Cloud.afterBoot();
+      };
+      if (typeof Cloud !== 'undefined') {
+        Cloud.gate(fs, start);
+      } else {
+        start();
+      }
     });
   }
 };
@@ -35,6 +43,7 @@ function persist() {
       fs.syncfs(false, function () { resolve(); });
     });
   });
+  if (typeof Cloud !== 'undefined') Cloud.onPersist();
   return syncChain;
 }
 
@@ -78,6 +87,13 @@ function boot() {
   });
   ['today', 'topics', 'plan', 'progress'].forEach(function (v) { bindView(document.getElementById('view-' + v)); });
   render();
+  try {
+    var note = sessionStorage.getItem('sm_note');
+    if (note) {
+      sessionStorage.removeItem('sm_note');
+      toast(note);
+    }
+  } catch (e) {}
   openFileDb().then(cleanOrphanFiles).then(refreshFileCounts).then(function () {
     if (currentView !== 'plan' || state.plan.exists) render();
   });

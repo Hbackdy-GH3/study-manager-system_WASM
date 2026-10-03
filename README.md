@@ -144,6 +144,40 @@ Example: `DSA,Trees,1` or `Maths,Matrices,0,1,20261002` (priority 1 High, 0 Medi
 
 Files per topic: every topic row has a 📎 button (and **Add notes or files** in the ⋯ menu) to attach PDFs, images or any file up to 50 MB. Files are stored in the browser (IndexedDB), open in a new tab, open from the **Study next** card on Today, are deleted with their topic, and are included in Export / Import.
 
+## Accounts and cloud sync (optional)
+
+The web app works without an account (data stays in the browser). With an account, topics, queue and plan sync to Supabase and topic files go to Cloudflare R2, so the same data opens on any device.
+
+How it works: the C code still reads and writes `data/data.txt`, `data/queue_data.txt` and `data/plan_data.txt`. `web/cloud.js` downloads these three files from Supabase before `wasm_init()` and uploads them after every change (with a check so an older device can't overwrite newer data). Deleting a topic therefore removes it from the database on the next save, and its files are deleted from R2.
+
+Files:
+- `web/config.js`: Supabase project URL and publishable key (safe to be public; never put the secret key here)
+- `web/cloud.js`: log in / sign up / reset password / use without account, sync, conflicts, offline
+- `functions/api/files.js`: Cloudflare Pages Function that stores files in R2 after checking the user's login
+
+Setup:
+1. Supabase: create a project, run the SQL below in the SQL Editor, set Authentication → URL Configuration → Site URL to the site address.
+2. Cloudflare: create an R2 bucket (`study-files`), then on the Pages project add the R2 binding `FILES` and the variables `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+
+```sql
+create table if not exists public.study_data (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  data_txt text not null default '',
+  queue_txt text not null default '',
+  plan_txt text not null default '',
+  updated_at timestamptz not null default now()
+);
+alter table public.study_data enable row level security;
+revoke all on public.study_data from anon;
+grant select, insert, update, delete on public.study_data to authenticated;
+create policy "own row read" on public.study_data for select to authenticated using (auth.uid() = user_id);
+create policy "own row add" on public.study_data for insert to authenticated with check (auth.uid() = user_id);
+create policy "own row change" on public.study_data for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own row remove" on public.study_data for delete to authenticated using (auth.uid() = user_id);
+```
+
+Note: with `python -m http.server` locally, login and sync work but topic files need the Pages Function, so test files on the deployed site (or with `npx wrangler pages dev web`).
+
 Every console menu option works in the web version:
 
 | Console menu | Where in the web app |

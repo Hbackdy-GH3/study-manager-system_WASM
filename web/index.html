@@ -27,8 +27,9 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 20V12M12 20V5M19 20v-9"/></svg><span>Progress</span></button>
     </nav>
     <div class="backup">
+      <div class="account" id="account"></div>
       <p class="backup-title">Backup</p>
-      <p class="backup-text">Every change saves on its own in this browser. Export a copy to keep it safe or move it to another device.</p>
+      <p class="backup-text">Download a copy of your topics, or load one from a file.</p>
       <div class="backup-btns">
         <button class="btn btn-quiet btn-sm" id="btn-export">Export</button>
         <button class="btn btn-quiet btn-sm" id="btn-import">Import</button>
@@ -48,8 +49,10 @@
 <dialog id="dlg"><div class="dlg" id="dlg-body"></div></dialog>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toast-text"></span><button id="toast-undo" hidden>Undo</button></div>
 
+<script src="config.js"></script>
 <script src="app.js"></script>
 <script src="files.js"></script>
+<script src="cloud.js"></script>
 <script src="study.js"></script>
 </body>
 </html>

@@ -1,10 +1,21 @@
-/* Topic attachments: stored as Blobs in their own IndexedDB database, keyed by topic ID */
+/* Topic attachments.
+   Without an account: Blobs in the browser's IndexedDB.
+   Logged in: files live in Cloudflare R2 behind /api/files (see functions/api/files.js). */
 
 var fileDb = null;
 var fileCounts = {};
 var MAX_FILE_MB = 50;
+var remoteList = null;
+
+function useCloudFiles() {
+  return typeof Cloud !== 'undefined' && Cloud.isCloud();
+}
+function filesReady() {
+  return useCloudFiles() || !!fileDb;
+}
 
 function openFileDb() {
+  if (fileDb) return Promise.resolve();
   try {
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   } catch (e) {}
@@ -37,34 +48,128 @@ function txDone(tx) {
   });
 }
 
-function allFileRecords() {
-  if (!fileDb) return Promise.resolve([]);
-  return new Promise(function (resolve) {
-    var out = [];
-    var req = fileStore('readonly').openCursor();
-    req.onsuccess = function () {
-      var c = req.result;
-      if (c) {
-        out.push(c.value);
-        c.continue();
-      } else {
-        resolve(out);
-      }
-    };
-    req.onerror = function () { resolve(out); };
+/* ---------- browser storage (IndexedDB) ---------- */
+
+function idbAll() {
+  return openFileDb().then(function () {
+    if (!fileDb) return [];
+    return new Promise(function (resolve) {
+      var out = [];
+      var req = fileStore('readonly').openCursor();
+      req.onsuccess = function () {
+        var c = req.result;
+        if (c) {
+          out.push(c.value);
+          c.continue();
+        } else {
+          resolve(out);
+        }
+      };
+      req.onerror = function () { resolve(out); };
+    });
   });
 }
 
+function idbClear() {
+  return openFileDb().then(function () {
+    if (!fileDb) return;
+    var tx = fileDb.transaction('files', 'readwrite');
+    tx.objectStore('files').clear();
+    return txDone(tx);
+  });
+}
+
+function idbAdd(topicId, list) {
+  var tx = fileDb.transaction('files', 'readwrite');
+  var now = Date.now();
+  list.forEach(function (f, i) {
+    tx.objectStore('files').add({
+      topicId: topicId,
+      name: f.name,
+      type: f.type || 'application/octet-stream',
+      size: f.size,
+      added: now + i,
+      blob: f
+    });
+  });
+  return txDone(tx);
+}
+
+function idbDeleteKeys(keys) {
+  if (!fileDb || keys.length === 0) return Promise.resolve();
+  var tx = fileDb.transaction('files', 'readwrite');
+  keys.forEach(function (k) { tx.objectStore('files').delete(k); });
+  return txDone(tx);
+}
+
+/* ---------- cloud storage (R2 through /api/files) ---------- */
+
+function filesApi() {
+  return (window.SM_CONFIG && SM_CONFIG.filesApi) || '/api/files';
+}
+
+function remoteRequest(query, opts) {
+  opts = opts || {};
+  return Cloud.token().then(function (t) {
+    var headers = { Authorization: 'Bearer ' + t };
+    Object.keys(opts.headers || {}).forEach(function (k) { headers[k] = opts.headers[k]; });
+    return fetch(filesApi() + (query ? '?' + query : ''), { method: opts.method || 'GET', headers: headers, body: opts.body });
+  }).then(function (res) {
+    if (!res.ok) {
+      return res.text().then(function (t) {
+        var msg = '';
+        try { msg = JSON.parse(t).error || ''; } catch (e) {}
+        throw { status: res.status, message: msg || 'File server error ' + res.status };
+      });
+    }
+    return res;
+  });
+}
+
+function newFileId() {
+  var a = new Uint8Array(10);
+  crypto.getRandomValues(a);
+  return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+}
+
+function remoteUpload(topicId, blob, name, type, added) {
+  var id = newFileId();
+  var when = added || Date.now();
+  return remoteRequest('topic=' + topicId + '&id=' + id, {
+    method: 'PUT',
+    headers: { 'Content-Type': type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(name), 'X-Added': String(when) },
+    body: blob
+  }).then(function () {
+    var rec = { key: topicId + '/' + id, id: id, topicId: topicId, name: name, type: type || 'application/octet-stream', size: blob.size, added: when };
+    if (remoteList) remoteList.push(rec);
+    return rec;
+  });
+}
+
+function loadRemoteList() {
+  return remoteRequest('').then(function (res) { return res.json(); }).then(function (j) {
+    remoteList = (j.files || []).map(function (f) {
+      return { key: f.topicId + '/' + f.id, id: f.id, topicId: f.topicId, name: f.name, type: f.type, size: f.size, added: f.added };
+    });
+    return remoteList;
+  });
+}
+
+/* ---------- one interface for the rest of the app ---------- */
+
+function allFileRecords() {
+  if (useCloudFiles()) {
+    if (remoteList) return Promise.resolve(remoteList.slice());
+    return loadRemoteList().then(function (l) { return l.slice(); }).catch(function () { return []; });
+  }
+  return idbAll();
+}
+
 function filesFor(topicId) {
-  if (!fileDb) return Promise.resolve([]);
-  return new Promise(function (resolve) {
-    var req = fileStore('readonly').index('topic').getAll(topicId);
-    req.onsuccess = function () {
-      var list = req.result || [];
-      list.sort(function (a, b) { return a.added - b.added; });
-      resolve(list);
-    };
-    req.onerror = function () { resolve([]); };
+  return allFileRecords().then(function (list) {
+    var out = list.filter(function (f) { return f.topicId === topicId; });
+    out.sort(function (a, b) { return a.added - b.added; });
+    return out;
   });
 }
 
@@ -77,51 +182,63 @@ function refreshFileCounts() {
 
 /* removes files whose topic no longer exists (for example after a topic was deleted elsewhere) */
 function cleanOrphanFiles() {
-  if (!fileDb) return Promise.resolve();
   var ids = {};
   state.topics.forEach(function (t) { ids[t.id] = true; });
   return allFileRecords().then(function (list) {
     var orphans = list.filter(function (f) { return !ids[f.topicId]; });
     if (orphans.length === 0) return;
-    var tx = fileDb.transaction('files', 'readwrite');
-    orphans.forEach(function (f) { tx.objectStore('files').delete(f.key); });
-    return txDone(tx);
-  });
+    if (useCloudFiles()) {
+      var topics = {};
+      orphans.forEach(function (f) { topics[f.topicId] = true; });
+      return Promise.all(Object.keys(topics).map(function (t) { return deleteTopicFiles(parseInt(t, 10)); }));
+    }
+    return idbDeleteKeys(orphans.map(function (f) { return f.key; }));
+  }).catch(function () {});
 }
 
 function addFiles(topicId, files) {
-  if (!fileDb) return Promise.reject(new Error('Storage not available'));
   var list = Array.prototype.slice.call(files);
   var tooBig = list.filter(function (f) { return f.size > MAX_FILE_MB * 1024 * 1024; });
   var ok = list.filter(function (f) { return f.size <= MAX_FILE_MB * 1024 * 1024; });
   if (ok.length === 0) return Promise.resolve({ added: 0, tooBig: tooBig.length });
-  var tx = fileDb.transaction('files', 'readwrite');
-  var now = Date.now();
-  ok.forEach(function (f, i) {
-    tx.objectStore('files').add({
-      topicId: topicId,
-      name: f.name,
-      type: f.type || 'application/octet-stream',
-      size: f.size,
-      added: now + i,
-      blob: f
+  if (useCloudFiles()) {
+    var chain = Promise.resolve();
+    var now = Date.now();
+    ok.forEach(function (f, i) {
+      chain = chain.then(function () { return remoteUpload(topicId, f, f.name, f.type, now + i); });
     });
-  });
-  return txDone(tx).then(function () { return { added: ok.length, tooBig: tooBig.length }; });
+    return chain.then(function () { return { added: ok.length, tooBig: tooBig.length }; });
+  }
+  if (!fileDb) return Promise.reject(new Error('Storage not available'));
+  return idbAdd(topicId, ok).then(function () { return { added: ok.length, tooBig: tooBig.length }; });
 }
 
 function deleteFile(key) {
-  var tx = fileDb.transaction('files', 'readwrite');
-  tx.objectStore('files').delete(key);
-  return txDone(tx);
+  if (useCloudFiles()) {
+    var parts = String(key).split('/');
+    return remoteRequest('topic=' + parts[0] + '&id=' + parts[1], { method: 'DELETE' }).then(function () {
+      if (remoteList) remoteList = remoteList.filter(function (f) { return f.key !== key; });
+    });
+  }
+  return idbDeleteKeys([key]);
 }
 
 function deleteTopicFiles(topicId) {
+  if (useCloudFiles()) {
+    return remoteRequest('topic=' + topicId, { method: 'DELETE' }).then(function () {
+      if (remoteList) remoteList = remoteList.filter(function (f) { return f.topicId !== topicId; });
+    });
+  }
   return filesFor(topicId).then(function (list) {
-    if (list.length === 0) return;
-    var tx = fileDb.transaction('files', 'readwrite');
-    list.forEach(function (f) { tx.objectStore('files').delete(f.key); });
-    return txDone(tx);
+    return idbDeleteKeys(list.map(function (f) { return f.key; }));
+  });
+}
+
+function getBlob(f) {
+  if (f.blob) return Promise.resolve(f.blob);
+  return remoteRequest('topic=' + f.topicId + '&id=' + f.id).then(function (res) { return res.blob(); }).then(function (b) {
+    if (b.size < 3 * 1024 * 1024) f.blob = b;
+    return b;
   });
 }
 
@@ -138,23 +255,32 @@ function fileKind(f) {
 }
 
 function openFileBlob(f) {
-  var url = URL.createObjectURL(f.blob);
-  var win = window.open(url, '_blank');
-  if (!win) {
-    downloadFileBlob(f);
-  }
-  setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  if (!f.blob) toast('Opening “' + f.name + '”…');
+  getBlob(f).then(function (blob) {
+    var url = URL.createObjectURL(blob);
+    if (!window.open(url, '_blank')) {
+      toast('Your browser blocked the new tab, so the file was downloaded instead.');
+      downloadFileBlob(f);
+    }
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }).catch(function () {
+    toast('Could not open the file. Check your internet connection.');
+  });
 }
 
 function downloadFileBlob(f) {
-  var url = URL.createObjectURL(f.blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = f.name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  getBlob(f).then(function (blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = f.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  }).catch(function () {
+    toast('Could not download the file. Check your internet connection.');
+  });
 }
 
 var thumbUrls = [];
@@ -170,9 +296,7 @@ function fileListHtml(list, canDelete) {
     var kind = fileKind(f);
     var thumb;
     if (kind === 'img') {
-      var u = URL.createObjectURL(f.blob);
-      thumbUrls.push(u);
-      thumb = '<img class="file-thumb" src="' + u + '" alt="">';
+      thumb = '<img class="file-thumb" data-thumb="' + esc(f.key) + '" alt="">';
     } else {
       thumb = '<span class="file-thumb file-' + kind + '">' + (kind === 'pdf' ? 'PDF' : 'FILE') + '</span>';
     }
@@ -192,6 +316,15 @@ function bindFileList(box, list, onDelete) {
     }
     return null;
   }
+  box.querySelectorAll('[data-thumb]').forEach(function (img) {
+    var f = find(img.dataset.thumb);
+    if (!f) return;
+    getBlob(f).then(function (blob) {
+      var u = URL.createObjectURL(blob);
+      thumbUrls.push(u);
+      img.src = u;
+    }).catch(function () {});
+  });
   box.querySelectorAll('[data-open-file]').forEach(function (b) {
     b.addEventListener('click', function () { openFileBlob(find(b.dataset.openFile)); });
   });
@@ -209,7 +342,7 @@ function bindFileList(box, list, onDelete) {
 function filesDialog(topicId) {
   var t = topicById(topicId);
   if (!t) return;
-  if (!fileDb) {
+  if (!filesReady()) {
     toast('File storage is not available in this browser');
     return;
   }
@@ -227,7 +360,9 @@ function filesDialog(topicId) {
           box.innerHTML = fileListHtml(list, true);
           bindFileList(box, list, function (f) {
             if (!window.confirm('Delete “' + f.name + '”?')) return;
-            deleteFile(f.key).then(load).then(afterFilesChanged);
+            deleteFile(f.key).then(load).then(afterFilesChanged).catch(function () {
+              toast('Could not delete the file. Check your internet connection.');
+            });
           });
         });
       }
@@ -238,8 +373,9 @@ function filesDialog(topicId) {
           if (r.tooBig) msg += ', ' + r.tooBig + ' over ' + MAX_FILE_MB + ' MB skipped';
           toast(msg);
           return load().then(afterFilesChanged);
-        }).catch(function () {
-          toast('Could not save the file. The browser may be out of storage.');
+        }).catch(function (e) {
+          toast(useCloudFiles() ? 'Could not upload: ' + ((e && e.message) || 'check your internet connection') : 'Could not save the file. The browser may be out of storage.');
+          load();
         });
       }
       pick.addEventListener('change', function () {
@@ -287,7 +423,7 @@ function dataUrlToBlob(dataUrl, type) {
 function filesForExport(topicId) {
   return filesFor(topicId).then(function (list) {
     return Promise.all(list.map(function (f) {
-      return blobToDataUrl(f.blob).then(function (data) {
+      return getBlob(f).then(blobToDataUrl).then(function (data) {
         return { name: f.name, type: f.type, data: data };
       });
     }));
@@ -295,7 +431,7 @@ function filesForExport(topicId) {
 }
 
 function importTopicFiles(topicId, files) {
-  if (!fileDb || !Array.isArray(files) || files.length === 0) return Promise.resolve(0);
+  if (!filesReady() || !Array.isArray(files) || files.length === 0) return Promise.resolve(0);
   return filesFor(topicId).then(function (have) {
     var names = {};
     have.forEach(function (f) { names[f.name] = true; });
