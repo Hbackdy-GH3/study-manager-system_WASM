@@ -174,7 +174,7 @@ button:disabled{cursor:default}
 .table-box{max-height:420px;overflow:auto;border:1px solid var(--line-soft);border-radius:14px;background:#FFFDF9}
 .table-box.tall{max-height:calc(100vh - 250px);min-height:320px}
 table{width:100%;border-collapse:collapse;font-size:14px}
-th{position:sticky;top:0;z-index:1;background:var(--card-2);text-align:left;font-size:13px;font-weight:600;color:var(--muted);padding:11px 12px;border-bottom:1px solid var(--line)}
+th{position:sticky;top:0;z-index:2;background:var(--card-2);text-align:left;font-size:13px;font-weight:600;color:var(--muted);padding:11px 12px;border-bottom:1px solid var(--line)}
 td{padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
 tr:last-child td{border-bottom:0}
 tbody tr:hover td{background:#FAF5EC}
@@ -186,7 +186,7 @@ th.c-act{text-align:right}
 td.c-act{text-align:right;white-space:nowrap}
 .row-actions{display:inline-flex;gap:6px;align-items:center;justify-content:flex-end}
 tr.is-done .ch-name{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--faint)}
-.group-row td{background:var(--card-2) !important;font-weight:700;font-size:13px;color:var(--teal);padding:8px 12px;position:sticky;top:41px;z-index:0}
+.group-row td{background:var(--card-2) !important;font-weight:700;font-size:13px;color:var(--teal);padding:8px 12px;position:sticky;top:41px;z-index:1}
 .group-row td span{color:var(--faint);font-weight:600;margin-left:6px}
 .no-rows{text-align:center;color:var(--muted);padding:30px 12px !important}
 
