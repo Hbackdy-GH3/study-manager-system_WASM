@@ -135,24 +135,113 @@ function newFileId() {
 function remoteUpload(topicId, blob, name, type, added) {
   var id = newFileId();
   var when = added || Date.now();
-  return remoteRequest('topic=' + topicId + '&id=' + id, {
-    method: 'PUT',
-    headers: { 'Content-Type': type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(name), 'X-Added': String(when) },
-    body: blob
-  }).then(function () {
-    var rec = { key: topicId + '/' + id, id: id, topicId: topicId, name: name, type: type || 'application/octet-stream', size: blob.size, added: when };
+  var isPdf = type === 'application/pdf' || /\.pdf$/i.test(name);
+  var headers = { 'Content-Type': type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(name), 'X-Added': String(when) };
+  if (isPdf && blob.size >= 2 * 1024 * 1024) headers['X-Compress'] = '1';
+  return remoteRequest('topic=' + topicId + '&id=' + id, { method: 'PUT', headers: headers, body: blob }).then(function (res) {
+    return res.json().catch(function () { return {}; });
+  }).then(function (j) {
+    var size = j.size || blob.size;
+    var rec = { key: topicId + '/' + id, id: id, topicId: topicId, name: name, type: type || 'application/octet-stream', size: size, added: when };
+    rec.note = j.compressed ? name + ': ' + fileSizeText(blob.size) + ' → ' + fileSizeText(size)
+      : (headers['X-Compress'] && j.note ? name + ' uploaded as is (' + j.note + ')' : '');
     if (remoteList) remoteList.push(rec);
+    if (remoteUsage) remoteUsage.used += size;
     return rec;
   });
 }
 
 function loadRemoteList() {
   return remoteRequest('').then(function (res) { return res.json(); }).then(function (j) {
+    remoteUsage = j.usage || null;
     remoteList = (j.files || []).map(function (f) {
       return { key: f.topicId + '/' + f.id, id: f.id, topicId: f.topicId, name: f.name, type: f.type, size: f.size, added: f.added };
     });
     return remoteList;
   });
+}
+
+/* ---------- shrinking photos before saving ---------- */
+
+var IMG_MAX_SIDE = 2560;
+var IMG_MIN_BYTES = 300 * 1024;
+var remoteUsage = null;
+
+function canvasBlob(canvas, type, quality) {
+  return new Promise(function (resolve) {
+    try {
+      canvas.toBlob(function (b) { resolve(b); }, type, quality);
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
+/* returns a smaller File, or null to keep the original */
+function compressImage(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < IMG_MIN_BYTES || typeof createImageBitmap !== 'function') {
+    return Promise.resolve(null);
+  }
+  var isPng = file.type === 'image/png';
+  return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(function () {
+    return createImageBitmap(file);
+  }).then(function (bmp) {
+    var scale = Math.min(1, IMG_MAX_SIDE / Math.max(bmp.width, bmp.height));
+    var w = Math.max(1, Math.round(bmp.width * scale));
+    var h = Math.max(1, Math.round(bmp.height * scale));
+    var canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    var ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    if (!isPng) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.drawImage(bmp, 0, 0, w, h);
+    if (bmp.close) bmp.close();
+    return canvasBlob(canvas, 'image/webp', isPng ? 0.92 : 0.86).then(function (b) {
+      if (b && b.type === 'image/webp') return b;
+      if (isPng) return null;
+      return canvasBlob(canvas, 'image/jpeg', 0.88);
+    });
+  }).then(function (b) {
+    if (!b || b.size > file.size * 0.85) return null;
+    var ext = b.type === 'image/webp' ? '.webp' : '.jpg';
+    var name = file.name.replace(/\.(png|jpe?g|webp)$/i, '') + ext;
+    return new File([b], name, { type: b.type, lastModified: Date.now() });
+  }).catch(function () {
+    return null;
+  });
+}
+
+function prepareFiles(list) {
+  var out = [];
+  var notes = [];
+  var chain = Promise.resolve();
+  list.forEach(function (f, i) {
+    chain = chain.then(function () {
+      if (/^image\//.test(f.type) && f.size >= IMG_MIN_BYTES) {
+        toast('Shrinking photo ' + (i + 1) + ' of ' + list.length + '…');
+      }
+      return compressImage(f).then(function (small) {
+        if (small) {
+          notes.push(f.name + ': ' + fileSizeText(f.size) + ' → ' + fileSizeText(small.size));
+          out.push(small);
+        } else {
+          out.push(f);
+        }
+      });
+    });
+  });
+  return chain.then(function () { return { files: out, notes: notes }; });
+}
+
+function usageText() {
+  if (!useCloudFiles() || !remoteUsage) return '';
+  var used = fileSizeText(remoteUsage.used);
+  return remoteUsage.quota ? 'Using ' + used + ' of ' + fileSizeText(remoteUsage.quota) : 'Using ' + used + ' of storage';
 }
 
 /* ---------- one interface for the rest of the app ---------- */
@@ -198,26 +287,41 @@ function cleanOrphanFiles() {
 
 function addFiles(topicId, files) {
   var list = Array.prototype.slice.call(files);
-  var tooBig = list.filter(function (f) { return f.size > MAX_FILE_MB * 1024 * 1024; });
-  var ok = list.filter(function (f) { return f.size <= MAX_FILE_MB * 1024 * 1024; });
-  if (ok.length === 0) return Promise.resolve({ added: 0, tooBig: tooBig.length });
-  if (useCloudFiles()) {
-    var chain = Promise.resolve();
-    var now = Date.now();
-    ok.forEach(function (f, i) {
-      chain = chain.then(function () { return remoteUpload(topicId, f, f.name, f.type, now + i); });
-    });
-    return chain.then(function () { return { added: ok.length, tooBig: tooBig.length }; });
-  }
-  if (!fileDb) return Promise.reject(new Error('Storage not available'));
-  return idbAdd(topicId, ok).then(function () { return { added: ok.length, tooBig: tooBig.length }; });
+  var tooBig = list.filter(function (f) { return f.size > MAX_FILE_MB * 1024 * 1024 && !/^image\//.test(f.type); });
+  var candidates = list.filter(function (f) { return tooBig.indexOf(f) === -1; });
+  if (candidates.length === 0) return Promise.resolve({ added: 0, tooBig: tooBig.length, notes: [] });
+  return prepareFiles(candidates).then(function (prep) {
+    var ok = prep.files.filter(function (f) { return f.size <= MAX_FILE_MB * 1024 * 1024; });
+    var extra = prep.files.length - ok.length;
+    var notes = prep.notes.slice();
+    if (ok.length === 0) return { added: 0, tooBig: tooBig.length + extra, notes: notes };
+    if (useCloudFiles()) {
+      var chain = Promise.resolve();
+      var now = Date.now();
+      ok.forEach(function (f, i) {
+        chain = chain.then(function () {
+          if (/pdf$/i.test(f.type) && f.size >= 2 * 1024 * 1024) toast('Uploading and compressing ' + f.name + '…');
+          else toast('Uploading ' + (i + 1) + ' of ' + ok.length + '…');
+          return remoteUpload(topicId, f, f.name, f.type, now + i).then(function (rec) {
+            if (rec.note) notes.push(rec.note);
+          });
+        });
+      });
+      return chain.then(function () { return { added: ok.length, tooBig: tooBig.length + extra, notes: notes }; });
+    }
+    if (!fileDb) return Promise.reject(new Error('Storage not available'));
+    return idbAdd(topicId, ok).then(function () { return { added: ok.length, tooBig: tooBig.length + extra, notes: notes }; });
+  });
 }
 
 function deleteFile(key) {
   if (useCloudFiles()) {
     var parts = String(key).split('/');
     return remoteRequest('topic=' + parts[0] + '&id=' + parts[1], { method: 'DELETE' }).then(function () {
-      if (remoteList) remoteList = remoteList.filter(function (f) { return f.key !== key; });
+      if (remoteList) {
+        remoteList.forEach(function (f) { if (f.key === key && remoteUsage) remoteUsage.used = Math.max(0, remoteUsage.used - f.size); });
+        remoteList = remoteList.filter(function (f) { return f.key !== key; });
+      }
     });
   }
   return idbDeleteKeys([key]);
@@ -226,7 +330,10 @@ function deleteFile(key) {
 function deleteTopicFiles(topicId) {
   if (useCloudFiles()) {
     return remoteRequest('topic=' + topicId, { method: 'DELETE' }).then(function () {
-      if (remoteList) remoteList = remoteList.filter(function (f) { return f.topicId !== topicId; });
+      if (remoteList) {
+        remoteList.forEach(function (f) { if (f.topicId === topicId && remoteUsage) remoteUsage.used = Math.max(0, remoteUsage.used - f.size); });
+        remoteList = remoteList.filter(function (f) { return f.topicId !== topicId; });
+      }
     });
   }
   return filesFor(topicId).then(function (list) {
@@ -347,7 +454,7 @@ function filesDialog(topicId) {
     return;
   }
   openDialog(
-    '<h2>Files · ' + esc(t.chapter) + '</h2><p class="muted" style="margin:0">' + esc(t.subject) + ' · PDFs, images or any file up to ' + MAX_FILE_MB + ' MB</p>' +
+    '<h2>Files · ' + esc(t.chapter) + '</h2><p class="muted" style="margin:0">' + esc(t.subject) + ' · PDFs, images or any file up to ' + MAX_FILE_MB + ' MB. Photos are shrunk without losing sharpness' + (useCloudFiles() ? ', big PDFs are compressed' : '') + '.</p>' +
     '<div id="file-box"><div class="empty">Loading...</div></div>' +
     '<label class="drop" id="file-drop"><input type="file" id="file-pick" multiple hidden>' + icon('plus') + '<span><strong>Add files</strong><span class="muted small">Click to choose, or drop files here</span></span></label>' +
     '<div class="dlg-actions"><button class="btn btn-teal" data-close="ok">Done</button></div>',
@@ -357,7 +464,7 @@ function filesDialog(topicId) {
       var drop = body.querySelector('#file-drop');
       function load() {
         return filesFor(topicId).then(function (list) {
-          box.innerHTML = fileListHtml(list, true);
+          box.innerHTML = fileListHtml(list, true) + (usageText() ? '<p class="hint">' + usageText() + '</p>' : '');
           bindFileList(box, list, function (f) {
             if (!window.confirm('Delete “' + f.name + '”?')) return;
             deleteFile(f.key).then(load).then(afterFilesChanged).catch(function () {
@@ -371,6 +478,7 @@ function filesDialog(topicId) {
         addFiles(topicId, files).then(function (r) {
           var msg = plural(r.added, 'file') + ' added';
           if (r.tooBig) msg += ', ' + r.tooBig + ' over ' + MAX_FILE_MB + ' MB skipped';
+          if (r.notes && r.notes.length) msg += '. ' + r.notes.join('. ');
           toast(msg);
           return load().then(afterFilesChanged);
         }).catch(function (e) {

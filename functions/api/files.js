@@ -1,5 +1,7 @@
 /* Cloudflare Pages Function: topic files in R2.
    Needs on the Pages project: R2 binding FILES, and variables SUPABASE_URL, SUPABASE_ANON_KEY.
+   Optional: ILOVEPDF_PUBLIC_KEY (compress big PDFs), ILOVEPDF_USER_MONTHLY (PDFs per user per month, default 30),
+   USER_QUOTA_MB (storage limit per user, no limit when empty).
    Every request carries the user's Supabase token; files are stored under <user id>/<topic id>/<file id>.
 
    GET    /api/files                    list all files of the user
@@ -10,6 +12,8 @@
    DELETE /api/files                    delete all files of the user */
 
 const MAX_BYTES = 50 * 1024 * 1024;
+const PDF_MIN = 2 * 1024 * 1024;
+const PDF_MAX = 25 * 1024 * 1024;
 
 function json(data, status) {
   return new Response(JSON.stringify(data), {
@@ -38,6 +42,56 @@ async function listKeys(bucket, prefix) {
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
   return out;
+}
+
+function monthKey(uid) {
+  const d = new Date();
+  return '_meta/' + uid + '/pdf-' + d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+}
+
+async function pdfCount(bucket, uid) {
+  const obj = await bucket.get(monthKey(uid));
+  if (!obj) return 0;
+  return parseInt(await obj.text(), 10) || 0;
+}
+
+async function compressPdf(body, name, env) {
+  const api = env.ILOVEPDF_TEST_BASE || 'https://api.ilovepdf.com';
+  const host = (server) => (env.ILOVEPDF_TEST_BASE ? env.ILOVEPDF_TEST_BASE : 'https://' + server);
+  const auth = await fetch(api + '/v1/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ public_key: env.ILOVEPDF_PUBLIC_KEY })
+  });
+  if (!auth.ok) return { note: 'compression service unavailable' };
+  const token = (await auth.json()).token;
+  const headers = { Authorization: 'Bearer ' + token };
+  const start = await fetch(api + '/v1/start/compress/in', { headers });
+  if (!start.ok) return { note: 'compression service unavailable' };
+  const task = await start.json();
+  if (typeof task.remaining_credits === 'number' && task.remaining_credits < 10) return { note: 'monthly compression credits used up' };
+  const form = new FormData();
+  form.append('task', task.task);
+  form.append('file', new Blob([body], { type: 'application/pdf' }), name);
+  const up = await fetch(host(task.server) + '/v1/upload', { method: 'POST', headers, body: form });
+  if (!up.ok) return { note: 'compression failed' };
+  const upJson = await up.json();
+  const proc = await fetch(host(task.server) + '/v1/process', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      task: task.task,
+      tool: 'compress',
+      compression_level: 'recommended',
+      files: [{ server_filename: upJson.server_filename, filename: name }]
+    })
+  });
+  if (!proc.ok) return { note: 'compression failed' };
+  const dl = await fetch(host(task.server) + '/v1/download/' + task.task, { headers });
+  if (!dl.ok) return { note: 'compression failed' };
+  const out = await dl.arrayBuffer();
+  fetch(host(task.server) + '/v1/task/' + task.task, { method: 'DELETE', headers }).catch(() => {});
+  return { buf: out };
 }
 
 async function deletePrefix(bucket, prefix) {
@@ -71,8 +125,11 @@ export async function onRequest(context) {
   const userPrefix = uid + '/';
   const method = request.method;
 
+  const quota = (parseInt(env.USER_QUOTA_MB || '0', 10) || 0) * 1024 * 1024;
+
   if (method === 'GET' && topic === null) {
     const objs = await listKeys(env.FILES, userPrefix);
+    const used = objs.reduce((n, o) => n + o.size, 0);
     const files = objs.map((o) => {
       const parts = o.key.split('/');
       const meta = o.customMetadata || {};
@@ -85,7 +142,7 @@ export async function onRequest(context) {
         added: parseInt(meta.added, 10) || new Date(o.uploaded).getTime()
       };
     });
-    return json({ files });
+    return json({ files, usage: { used, quota } });
   }
 
   if (method === 'GET' && id !== null) {
@@ -110,11 +167,45 @@ export async function onRequest(context) {
     try { name = decodeURIComponent(name); } catch (e) {}
     name = name.slice(0, 200);
     const added = String(parseInt(request.headers.get('X-Added') || '', 10) || Date.now());
-    await env.FILES.put(userPrefix + topic + '/' + id, body, {
-      httpMetadata: { contentType: request.headers.get('Content-Type') || 'application/octet-stream' },
-      customMetadata: { name, added }
+    const type = request.headers.get('Content-Type') || 'application/octet-stream';
+
+    if (quota) {
+      const objs = await listKeys(env.FILES, userPrefix);
+      const used = objs.reduce((n, o) => n + o.size, 0);
+      if (used + body.byteLength > quota) {
+        return json({ error: 'Storage full. You can store up to ' + Math.round(quota / 1048576) + ' MB of files. Delete some files first.' }, 413);
+      }
+    }
+
+    let stored = body;
+    let note = '';
+    const wantPdf = request.headers.get('X-Compress') === '1' && (type === 'application/pdf' || /\.pdf$/i.test(name));
+    if (wantPdf && env.ILOVEPDF_PUBLIC_KEY && body.byteLength >= PDF_MIN && body.byteLength <= PDF_MAX) {
+      const limit = parseInt(env.ILOVEPDF_USER_MONTHLY || '30', 10) || 30;
+      const count = await pdfCount(env.FILES, uid);
+      if (count >= limit) {
+        note = 'your monthly PDF compression limit is used up';
+      } else {
+        try {
+          const r = await compressPdf(body, name, env);
+          if (r.buf) {
+            await env.FILES.put(monthKey(uid), String(count + 1));
+            if (r.buf.byteLength <= body.byteLength * 0.9) stored = r.buf;
+            else note = 'it was already small';
+          } else {
+            note = r.note;
+          }
+        } catch (e) {
+          note = 'compression service unavailable';
+        }
+      }
+    }
+
+    await env.FILES.put(userPrefix + topic + '/' + id, stored, {
+      httpMetadata: { contentType: type },
+      customMetadata: { name, added, original: String(body.byteLength) }
     });
-    return json({ ok: true, size: body.byteLength });
+    return json({ ok: true, size: stored.byteLength, originalSize: body.byteLength, compressed: stored !== body, note });
   }
 
   if (method === 'DELETE') {

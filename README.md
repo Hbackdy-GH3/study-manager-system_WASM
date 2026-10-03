@@ -158,6 +158,12 @@ Files:
 Setup:
 1. Supabase: create a project, run the SQL below in the SQL Editor, set Authentication → URL Configuration → Site URL to the site address.
 2. Cloudflare: create an R2 bucket (`study-files`), then on the Pages project add the R2 binding `FILES` and the variables `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+3. Optional, on the Pages project:
+   - `ILOVEPDF_PUBLIC_KEY` (Secret): PDFs of 2-25 MB are compressed with the iLovePDF API before saving (text stays selectable). When credits run out or the service fails, the original is saved.
+   - `ILOVEPDF_USER_MONTHLY`: how many PDFs one user can compress per month (default 30), so one user can't use up all credits.
+   - `USER_QUOTA_MB`: storage limit per user in MB (no limit when not set).
+
+Photos (JPEG/PNG/WebP over 300 KB) are shrunk in the browser before saving: longest side up to 2560 px, WebP at high quality, only kept when clearly smaller. This works with and without an account.
 
 ```sql
 create table if not exists public.study_data (
