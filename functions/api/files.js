@@ -2,6 +2,7 @@
    Needs on the Pages project: R2 binding FILES, and variables SUPABASE_URL, SUPABASE_ANON_KEY.
    Optional: ILOVEPDF_PUBLIC_KEY (compress big PDFs), ILOVEPDF_USER_MONTHLY (PDFs per user per month, default 30),
    USER_QUOTA_MB (storage limit per user, no limit when empty).
+   GET /api/files?status=1 (no login) shows which of these are set, without showing their values.
    Every request carries the user's Supabase token; files are stored under <user id>/<topic id>/<file id>.
 
    GET    /api/files                    list all files of the user
@@ -63,18 +64,18 @@ async function compressPdf(body, name, env) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ public_key: env.ILOVEPDF_PUBLIC_KEY })
   });
-  if (!auth.ok) return { note: 'compression service unavailable' };
+  if (!auth.ok) return { note: 'iLovePDF key rejected, error ' + auth.status };
   const token = (await auth.json()).token;
   const headers = { Authorization: 'Bearer ' + token };
   const start = await fetch(api + '/v1/start/compress/in', { headers });
-  if (!start.ok) return { note: 'compression service unavailable' };
+  if (!start.ok) return { note: 'iLovePDF start failed, error ' + start.status };
   const task = await start.json();
   if (typeof task.remaining_credits === 'number' && task.remaining_credits < 10) return { note: 'monthly compression credits used up' };
   const form = new FormData();
   form.append('task', task.task);
   form.append('file', new Blob([body], { type: 'application/pdf' }), name);
   const up = await fetch(host(task.server) + '/v1/upload', { method: 'POST', headers, body: form });
-  if (!up.ok) return { note: 'compression failed' };
+  if (!up.ok) return { note: 'iLovePDF upload failed, error ' + up.status };
   const upJson = await up.json();
   const proc = await fetch(host(task.server) + '/v1/process', {
     method: 'POST',
@@ -86,9 +87,9 @@ async function compressPdf(body, name, env) {
       files: [{ server_filename: upJson.server_filename, filename: name }]
     })
   });
-  if (!proc.ok) return { note: 'compression failed' };
+  if (!proc.ok) return { note: 'iLovePDF process failed, error ' + proc.status };
   const dl = await fetch(host(task.server) + '/v1/download/' + task.task, { headers });
-  if (!dl.ok) return { note: 'compression failed' };
+  if (!dl.ok) return { note: 'iLovePDF download failed, error ' + dl.status };
   const out = await dl.arrayBuffer();
   fetch(host(task.server) + '/v1/task/' + task.task, { method: 'DELETE', headers }).catch(() => {});
   return { buf: out };
@@ -102,8 +103,47 @@ async function deletePrefix(bucket, prefix) {
   return objs.length;
 }
 
+async function serverStatus(env) {
+  const out = {
+    version: 'compress-3',
+    r2: !!env.FILES,
+    supabase: !!(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
+    compressKey: !!env.ILOVEPDF_PUBLIC_KEY,
+    userMonthly: parseInt(env.ILOVEPDF_USER_MONTHLY || '30', 10) || 30,
+    quotaMB: parseInt(env.USER_QUOTA_MB || '0', 10) || 0,
+    ilovepdf: 'not set'
+  };
+  if (!env.ILOVEPDF_PUBLIC_KEY) return out;
+  try {
+    const auth = await fetch((env.ILOVEPDF_TEST_BASE || 'https://api.ilovepdf.com') + '/v1/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ public_key: env.ILOVEPDF_PUBLIC_KEY })
+    });
+    if (!auth.ok) {
+      out.ilovepdf = 'key rejected, error ' + auth.status;
+      return out;
+    }
+    const token = (await auth.json()).token;
+    const start = await fetch((env.ILOVEPDF_TEST_BASE || 'https://api.ilovepdf.com') + '/v1/start/compress/in', { headers: { Authorization: 'Bearer ' + token } });
+    if (!start.ok) {
+      out.ilovepdf = 'start failed, error ' + start.status;
+      return out;
+    }
+    const task = await start.json();
+    out.ilovepdf = 'ok';
+    out.credits = task.remaining_credits;
+  } catch (e) {
+    out.ilovepdf = 'could not reach iLovePDF';
+  }
+  return out;
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
+  if (request.method === 'GET' && new URL(request.url).searchParams.get('status') === '1') {
+    return json(await serverStatus(env));
+  }
   if (!env.FILES || !env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
     return json({ error: 'File storage is not set up on the server.' }, 500);
   }
@@ -180,7 +220,13 @@ export async function onRequest(context) {
     let stored = body;
     let note = '';
     const wantPdf = request.headers.get('X-Compress') === '1' && (type === 'application/pdf' || /\.pdf$/i.test(name));
-    if (wantPdf && env.ILOVEPDF_PUBLIC_KEY && body.byteLength >= PDF_MIN && body.byteLength <= PDF_MAX) {
+    if (wantPdf && !env.ILOVEPDF_PUBLIC_KEY) {
+      note = 'ILOVEPDF_PUBLIC_KEY is not set on the server';
+    } else if (wantPdf && body.byteLength < PDF_MIN) {
+      note = 'it is under 2 MB';
+    } else if (wantPdf && body.byteLength > PDF_MAX) {
+      note = 'it is over 25 MB';
+    } else if (wantPdf) {
       const limit = parseInt(env.ILOVEPDF_USER_MONTHLY || '30', 10) || 30;
       const count = await pdfCount(env.FILES, uid);
       if (count >= limit) {
@@ -196,7 +242,7 @@ export async function onRequest(context) {
             note = r.note;
           }
         } catch (e) {
-          note = 'compression service unavailable';
+          note = 'could not reach iLovePDF';
         }
       }
     }
@@ -205,7 +251,7 @@ export async function onRequest(context) {
       httpMetadata: { contentType: type },
       customMetadata: { name, added, original: String(body.byteLength) }
     });
-    return json({ ok: true, size: stored.byteLength, originalSize: body.byteLength, compressed: stored !== body, note });
+    return json({ ok: true, version: 'compress-3', size: stored.byteLength, originalSize: body.byteLength, compressed: stored !== body, note });
   }
 
   if (method === 'DELETE') {

@@ -143,8 +143,9 @@ function remoteUpload(topicId, blob, name, type, added) {
   }).then(function (j) {
     var size = j.size || blob.size;
     var rec = { key: topicId + '/' + id, id: id, topicId: topicId, name: name, type: type || 'application/octet-stream', size: size, added: when };
+    var why = j.note || (j.version ? '' : 'server is on the old version, redeploy it');
     rec.note = j.compressed ? name + ': ' + fileSizeText(blob.size) + ' → ' + fileSizeText(size)
-      : (headers['X-Compress'] && j.note ? name + ' uploaded as is (' + j.note + ')' : '');
+      : (headers['X-Compress'] && why ? name + ' uploaded as is (' + why + ')' : '');
     if (remoteList) remoteList.push(rec);
     if (remoteUsage) remoteUsage.used += size;
     return rec;
